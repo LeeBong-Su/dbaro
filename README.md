@@ -30,7 +30,6 @@ dbaro/
 
 ## 문서
 
-- [기본 기능 요구사항](https://claude.ai/artifact/DDs7BCBm39zsD8DFwmJpam)
 - [아키텍처](docs/architecture.md)
 - [통신 규약](protocol/README.md)
 - [성능 기준](bench/README.md)
