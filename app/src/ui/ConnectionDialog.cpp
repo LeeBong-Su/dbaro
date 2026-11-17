@@ -1,7 +1,9 @@
 #include "ConnectionDialog.h"
 
 #include "UiHelpers.h"
+#include "core/ConnectSpec.h"
 #include "core/SecretStore.h"
+#include "ipc/EngineClient.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -11,6 +13,7 @@
 #include <QFontDatabase>
 #include <QFormLayout>
 #include <QHBoxLayout>
+#include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
@@ -64,7 +67,8 @@ ConnectionDialog::ConnectionDialog(const QList<ConnectionProfile> &profiles, QWi
     // 아래: 연결 테스트, 메시지, 저장/취소
     m_testButton = new QPushButton(tr("Test Connection"), this);
     m_testButton->setEnabled(false);
-    m_testButton->setToolTip(tr("Available once the engine connection is implemented."));
+    m_testButton->setToolTip(tr("Connect with these settings and report the server version."));
+    connect(m_testButton, &QPushButton::clicked, this, &ConnectionDialog::testConnection);
 
     m_message = new QLabel(this);
     m_message->setWordWrap(true);
@@ -223,6 +227,60 @@ QWidget *ConnectionDialog::createAdvancedPage()
     return page;
 }
 
+void ConnectionDialog::setEngine(EngineClient *engine)
+{
+    m_engine = engine;
+    m_testButton->setEnabled(engine && m_currentRow >= 0 && !m_testing);
+}
+
+void ConnectionDialog::testConnection()
+{
+    if (!m_engine || m_currentRow < 0 || m_testing)
+        return;
+    storeForm();
+    const ConnectionProfile profile = m_profiles[m_currentRow];
+
+    // 입력 중인 비밀번호 → 저장된 비밀번호 → 직접 묻기 순서로 쓴다.
+    QString password;
+    const std::optional<QString> saved =
+        profile.savePassword ? SecretStore::loadPassword(profile.id) : std::optional<QString>();
+    if (m_pendingPasswords.contains(profile.id)) {
+        password = m_pendingPasswords.value(profile.id);
+    } else if (saved) {
+        password = *saved;
+    } else {
+        bool ok = false;
+        password = QInputDialog::getText(this, tr("Password"), tr("Password for %1:").arg(profile.user),
+                                         QLineEdit::Password, QString(), &ok);
+        if (!ok)
+            return;
+    }
+
+    m_testing = true;
+    m_testButton->setEnabled(false);
+    showMessage(tr("Testing %1 ... (the JDBC driver is downloaded on first use)").arg(Db::jdbcUrl(profile)), false);
+
+    QPointer<ConnectionDialog> self(this);
+    m_engine->request(QStringLiteral("test"), ConnectSpec::fromProfile(profile, password, true).toCbor(),
+                      [self](const QCborMap &result, const EngineError &error) {
+                          if (!self)
+                              return;
+                          self->m_testing = false;
+                          self->m_testButton->setEnabled(self->m_currentRow >= 0);
+                          if (error.isError()) {
+                              self->showMessage(tr("Connection failed: %1").arg(error.message), true);
+                              return;
+                          }
+                          self->showMessage(
+                              tr("Connected in %1 ms: %2 %3 (driver %4)")
+                                  .arg(result.value(QStringLiteral("elapsedMs")).toInteger())
+                                  .arg(result.value(QStringLiteral("product")).toString(),
+                                       result.value(QStringLiteral("productVersion")).toString().section(u'\n', 0, 0),
+                                       result.value(QStringLiteral("driverVersion")).toString()),
+                              false);
+                      });
+}
+
 void ConnectionDialog::startNewConnection()
 {
     addConnection();
@@ -332,6 +390,7 @@ void ConnectionDialog::onCurrentRowChanged(int row)
     m_pages->setEnabled(hasSelection);
     m_duplicateButton->setEnabled(hasSelection);
     m_deleteButton->setEnabled(hasSelection);
+    m_testButton->setEnabled(hasSelection && m_engine && !m_testing);
 
     if (hasSelection) {
         loadForm(m_profiles[row]);

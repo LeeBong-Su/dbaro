@@ -5,8 +5,10 @@
 #include <QDialog>
 #include <QHash>
 #include <QList>
+#include <QPointer>
 #include <QStringList>
 
+class EngineClient;
 class QCheckBox;
 class QComboBox;
 class QFormLayout;
@@ -27,6 +29,9 @@ class ConnectionDialog : public QDialog
 public:
     explicit ConnectionDialog(const QList<ConnectionProfile> &profiles, QWidget *parent = nullptr);
 
+    // 연결 테스트에 쓸 엔진. 지정하지 않으면 연결 테스트 버튼이 비활성이다.
+    void setEngine(EngineClient *engine);
+
     void startNewConnection();
     void selectConnection(const QString &id);
     QString selectedId() const;
@@ -43,6 +48,7 @@ private:
     QWidget *createGeneralPage();
     QWidget *createAdvancedPage();
 
+    void testConnection();
     void addConnection();
     void duplicateConnection();
     void deleteConnection();
@@ -99,4 +105,6 @@ private:
 
     QPushButton *m_testButton = nullptr;
     QLabel *m_message = nullptr;
+    QPointer<EngineClient> m_engine;
+    bool m_testing = false;
 };

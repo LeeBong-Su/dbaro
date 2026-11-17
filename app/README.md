@@ -7,7 +7,7 @@ DB 연결은 직접 하지 않고 엔진 프로세스(`../engine`)에 맡긴다.
 |---|---|
 | `src/ui/` | 메인 창, SQL 에디터, 결과 그리드, 객체 탐색기, 연결 관리 화면, 테마(`Theme`), 아이콘(`Icons`) |
 | `src/core/` | 연결 정보 저장(`ConnectionStore`), 비밀번호 보안 저장(`SecretStore`), 방언별 문장 분리(`SqlSplitter`). 이후 자동완성, 메타데이터 캐시 |
-| `src/ipc/` | 엔진 프로세스 실행과 통신 |
+| `src/ipc/` | 엔진 프로세스 실행과 통신 (`EngineClient`) |
 | `resources/icons/` | 자체 아이콘 (SVG, `#ICON` 색은 테마에 맞춰 바뀜). 이후 번역(한국어·영어) |
 | `tests/` | 단위 테스트 |
 
@@ -40,3 +40,6 @@ cmake --build build/app --config Release
 ```
 
 실행하려면 Qt DLL이 필요하다. `C:\Qt\6.10.3\msvc2022_64\bin`을 PATH에 넣거나, 배포용으로는 `windeployqt`로 DLL을 exe 옆에 복사한다.
+
+쿼리를 실행하려면 엔진이 설치돼 있어야 한다. `engine` 폴더에서 `./gradlew installDist`를 한 번 실행하면 앱이 자동으로 찾는다.
+Java는 `JAVA_HOME`(JDK 21)을 쓴다. 다른 위치면 `DBARO_JAVA`, `DBARO_ENGINE_HOME`으로 지정한다.

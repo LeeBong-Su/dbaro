@@ -11,6 +11,8 @@ qt_standard_project_setup()
 
 # 앱 코드 전체. 실행 파일과 이후의 테스트가 함께 링크한다.
 qt_add_library(dbaro_lib STATIC
+    src/core/ConnectSpec.cpp
+    src/core/ConnectSpec.h
     src/core/ConnectionProfile.cpp
     src/core/ConnectionProfile.h
     src/core/ConnectionStore.cpp
@@ -18,8 +20,12 @@ qt_add_library(dbaro_lib STATIC
     src/core/SecretStore.cpp
     src/core/SecretStore.h
     src/core/SqlDialect.h
+    src/core/SqlSafety.cpp
+    src/core/SqlSafety.h
     src/core/SqlSplitter.cpp
     src/core/SqlSplitter.h
+    src/ipc/EngineClient.cpp
+    src/ipc/EngineClient.h
     src/ui/ConnectionDialog.cpp
     src/ui/ConnectionDialog.h
     src/ui/EditorTabs.cpp
@@ -30,8 +36,12 @@ qt_add_library(dbaro_lib STATIC
     src/ui/MainWindow.h
     src/ui/ObjectExplorer.cpp
     src/ui/ObjectExplorer.h
+    src/ui/QuerySession.cpp
+    src/ui/QuerySession.h
     src/ui/QueryTab.cpp
     src/ui/QueryTab.h
+    src/ui/ResultModel.cpp
+    src/ui/ResultModel.h
     src/ui/ResultPanel.cpp
     src/ui/ResultPanel.h
     src/ui/SqlEditor.cpp

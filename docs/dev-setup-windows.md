@@ -44,6 +44,15 @@ truststore.inject_into_ssl()
 
 그다음 위의 `aqt install-qt` 명령을 그대로 실행한다.
 
-## 3. 테스트용 DB
+## 3. 엔진 설치
+
+```powershell
+cd engine
+.\gradlew.bat installDist
+```
+
+앱은 `engine/build/install/dbaro-engine`을 자동으로 찾아 엔진을 띄운다.
+
+## 4. 테스트용 DB
 
 Docker 호환 도구는 아직 설치하지 않았다. Docker Desktop은 직원 250명 이상 또는 매출 1천만 달러 이상인 회사에서 업무용으로 쓰면 유료 구독이 필요하다. 무료 대안은 Rancher Desktop이다.
