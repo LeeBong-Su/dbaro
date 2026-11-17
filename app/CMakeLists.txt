@@ -17,6 +17,9 @@ qt_add_library(dbaro_lib STATIC
     src/core/ConnectionStore.h
     src/core/SecretStore.cpp
     src/core/SecretStore.h
+    src/core/SqlDialect.h
+    src/core/SqlSplitter.cpp
+    src/core/SqlSplitter.h
     src/ui/ConnectionDialog.cpp
     src/ui/ConnectionDialog.h
     src/ui/MainWindow.cpp
@@ -27,6 +30,10 @@ qt_add_library(dbaro_lib STATIC
     src/ui/QueryTab.h
     src/ui/ResultPanel.cpp
     src/ui/ResultPanel.h
+    src/ui/SqlEditor.cpp
+    src/ui/SqlEditor.h
+    src/ui/SqlHighlighter.cpp
+    src/ui/SqlHighlighter.h
     src/ui/UiHelpers.h
 )
 

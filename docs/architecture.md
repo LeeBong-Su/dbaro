@@ -54,6 +54,14 @@ DBaro는 Qt 6(C++) 앱과 Kotlin/JVM 엔진, 두 프로세스로 동작한다.
 ## 아직 정하지 않은 것
 
 - 앱과 엔진 사이 메시지 형식 (Protobuf 또는 MessagePack)과 결과 전송 형식 (Arrow IPC 등)
-- SQL 에디터 구현 방식: 직접 구현 또는 KTextEditor 기반
-- 에디터용 파서 방식: tree-sitter 기반 또는 직접 작성 (입력 중인 잘못된 SQL을 견디고, 바뀐 부분만 다시 분석해야 함)
+- 자동완성용 파서 방식: tree-sitter 기반 또는 직접 작성 (입력 중인 잘못된 SQL을 견디고, 바뀐 부분만 다시 분석해야 함)
+
+## SQL 에디터
+
+`QPlainTextEdit`를 확장한 자체 컴포넌트(`app/src/ui/SqlEditor`)다.
+KTextEditor는 KDE 프레임워크 의존이 무겁고, QScintilla는 GPL이라 쓰지 않았다.
+에디터 API를 DBaro가 갖고 있으므로, 나중에 렌더링까지 자체 구현으로 바꿔도 다른 코드는 바뀌지 않는다.
+
+- 문장 분리(`app/src/core/SqlSplitter`)는 직접 작성한 스캐너다. 문자열·인용 식별자·주석 안의 구분자를 무시하고, 방언별 규칙(Oracle `/` 줄과 PL/SQL 블록, q'[...]', MySQL `DELIMITER`, PostgreSQL `$$`)을 따른다.
+- 세로 커서는 줄마다 `QTextCursor`를 하나씩 두는 방식이다. 조합이 끝난 한글은 모든 커서에 들어가고, 조합 중인 글자는 주 커서에만 보인다.
 - Qt 라이선스: LGPLv3 동적 링크 유지 또는 상용 라이선스

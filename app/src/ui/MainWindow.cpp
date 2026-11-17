@@ -4,8 +4,10 @@
 #include "ObjectExplorer.h"
 #include "QueryTab.h"
 #include "ResultPanel.h"
+#include "SqlEditor.h"
 #include "UiHelpers.h"
 #include "core/SecretStore.h"
+#include "core/SqlDialect.h"
 
 #include <QAction>
 #include <QApplication>
@@ -271,10 +273,27 @@ void MainWindow::executeCurrent(bool wholeScript)
     if (!tab)
         return;
 
-    // 엔진 연결이 생기기 전까지는 로그에 안내만 남긴다.
-    const QString what = wholeScript ? tr("Execute script") : tr("Execute statement");
-    tab->resultPanel()->appendLog(tr("%1: not connected (execution is not implemented yet)").arg(what));
-    tab->resultPanel()->showLog();
+    ResultPanel *results = tab->resultPanel();
+    const QList<SqlStatement> statements = tab->editor()->statementsToExecute(wholeScript);
+    if (statements.isEmpty()) {
+        results->appendLog(tr("Nothing to execute."));
+        results->showLog();
+        return;
+    }
+
+    // 엔진 연결이 생기기 전까지는 실행할 문장만 로그에 보여 준다.
+    const ConnectionProfile *profile = m_store.find(tab->connectionId());
+    const QString target = profile ? profile->name : tr("no connection");
+    results->appendLog(tr("%n statement(s) ready for %1 (execution is not implemented yet)", nullptr,
+                          int(statements.size()))
+                           .arg(target));
+    for (int k = 0; k < statements.size(); ++k) {
+        QString preview = statements[k].text.simplified();
+        if (preview.size() > 160)
+            preview = preview.left(157) + QStringLiteral("...");
+        results->appendLog(QStringLiteral("  [%1] %2").arg(k + 1).arg(preview));
+    }
+    results->showLog();
 }
 
 void MainWindow::openConnectionDialog(bool startNew)
@@ -349,6 +368,7 @@ void MainWindow::setTabConnection(QueryTab *tab, const QString &connectionId)
     const ConnectionProfile *profile = m_store.find(connectionId);
     tab->setConnectionId(profile ? connectionId : QString());
     tab->setConnectionColor(profile ? Env::color(profile->environment) : QColor());
+    tab->setDialect(profile ? sqlDialectFor(profile->type) : SqlDialect::Generic);
 
     const int index = m_tabs->indexOf(tab);
     if (index >= 0)

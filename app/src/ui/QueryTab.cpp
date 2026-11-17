@@ -1,12 +1,10 @@
 #include "QueryTab.h"
 
 #include "ResultPanel.h"
+#include "SqlEditor.h"
 
 #include <QColor>
-#include <QFontDatabase>
-#include <QFontMetricsF>
 #include <QFrame>
-#include <QPlainTextEdit>
 #include <QSplitter>
 #include <QTextCursor>
 #include <QVBoxLayout>
@@ -18,14 +16,8 @@ QueryTab::QueryTab(QWidget *parent)
     m_colorStrip->setFixedHeight(4);
     m_colorStrip->hide();
 
-    // 임시 에디터. 에디터 구현 방식(직접 구현 또는 KTextEditor)이 정해지면 교체한다.
-    m_editor = new QPlainTextEdit(this);
-    QFont mono = QFontDatabase::systemFont(QFontDatabase::FixedFont);
-    mono.setPointSize(11);
-    m_editor->setFont(mono);
-    m_editor->setLineWrapMode(QPlainTextEdit::NoWrap);
-    m_editor->setTabStopDistance(QFontMetricsF(mono).horizontalAdvance(QLatin1Char(' ')) * 4);
-    m_editor->setPlaceholderText(tr("Write SQL here. Ctrl+Enter runs the current statement."));
+    m_editor = new SqlEditor(this);
+    m_editor->setPlaceholderText(tr("Write SQL here. Ctrl+Enter runs the current statement, F5 runs the script."));
 
     m_results = new ResultPanel(this);
 
@@ -42,10 +34,15 @@ QueryTab::QueryTab(QWidget *parent)
     layout->addWidget(m_colorStrip);
     layout->addWidget(m_splitter);
 
-    connect(m_editor, &QPlainTextEdit::cursorPositionChanged, this, [this] {
+    connect(m_editor, &SqlEditor::cursorPositionChanged, this, [this] {
         const QTextCursor cursor = m_editor->textCursor();
         emit cursorPositionChanged(cursor.blockNumber() + 1, cursor.positionInBlock() + 1);
     });
+}
+
+void QueryTab::setDialect(SqlDialect dialect)
+{
+    m_editor->setDialect(dialect);
 }
 
 void QueryTab::setConnectionColor(const QColor &color)
