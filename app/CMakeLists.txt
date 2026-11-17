@@ -11,7 +11,17 @@ qt_standard_project_setup()
 
 qt_add_executable(dbaro
     src/main.cpp
+    src/ui/MainWindow.cpp
+    src/ui/MainWindow.h
+    src/ui/ObjectExplorer.cpp
+    src/ui/ObjectExplorer.h
+    src/ui/QueryTab.cpp
+    src/ui/QueryTab.h
+    src/ui/ResultPanel.cpp
+    src/ui/ResultPanel.h
 )
+
+target_include_directories(dbaro PRIVATE src)
 
 target_link_libraries(dbaro PRIVATE
     Qt6::Widgets
