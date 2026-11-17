@@ -31,6 +31,11 @@ QString findJava()
 #else
     const QString executable = QStringLiteral("java");
 #endif
+    // 배포본: 앱 옆의 runtime/ (jlink로 만든 Java 런타임). 사용자가 Java를 설치하지 않아도 된다.
+    const QString bundled = QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("runtime/bin/") + executable);
+    if (QFileInfo::exists(bundled))
+        return bundled;
+
     const QString javaHome = qEnvironmentVariable("JAVA_HOME");
     if (!javaHome.isEmpty()) {
         const QString candidate = QDir(javaHome).filePath(QStringLiteral("bin/") + executable);

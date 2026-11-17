@@ -38,7 +38,8 @@ public:
     // 기본 위치를 찾지 않고 실행 명령을 직접 정한다.
     void setCommand(const QString &program, const QStringList &arguments);
 
-    // Java: DBARO_JAVA → JAVA_HOME → PATH. 엔진: DBARO_ENGINE_HOME → 앱 옆 engine/ → 저장소의 installDist 결과.
+    // Java: DBARO_JAVA → 앱 옆 runtime/ → JAVA_HOME → PATH.
+    // 엔진: DBARO_ENGINE_HOME → 앱 옆 engine/ → 저장소의 installDist 결과.
     static bool locateDefault(QString *program, QStringList *arguments, QString *error);
 
     bool isRunning() const;

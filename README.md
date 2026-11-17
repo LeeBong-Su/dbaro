@@ -12,6 +12,8 @@ dbaro/
 ├─ protocol/   앱과 엔진 사이 통신 규약
 ├─ dev/        개발·테스트용 DB (Docker Compose)
 ├─ bench/      성능 기준과 측정
+├─ packaging/  배포본에 넣는 안내문, 제3자 라이선스 고지
+├─ scripts/    빌드·배포 스크립트
 └─ docs/       설계 문서
 ```
 
@@ -27,6 +29,24 @@ dbaro/
 
 Windows 설치 방법은 [docs/dev-setup-windows.md](docs/dev-setup-windows.md)에 있다.
 빌드 방법은 `app/README.md`, `engine/README.md`에 있다.
+
+## 배포본 만들기 (Windows)
+
+```powershell
+.\scripts\package-windows.ps1            # 엔진 테스트까지 하려면 -RunTests
+```
+
+`dist\DBaro-<버전>-windows-x64\` 폴더와 같은 이름의 ZIP이 만들어진다. 사용자 PC에는 Java나 Qt를 설치할 필요가 없다.
+
+| 들어가는 것 | 내용 |
+|---|---|
+| `dbaro.exe`, `Qt6*.dll`, 플러그인 폴더 | 앱과 Qt (`windeployqt`로 수집) |
+| `vcruntime140*.dll`, `msvcp140*.dll` 등 | MSVC 런타임 (앱 옆에 두는 방식) |
+| `engine\lib\*.jar` | 엔진 |
+| `runtime\` | `jlink`로 만든 Java 21 런타임 (JDBC·TLS·한국어 문자셋에 필요한 모듈만) |
+| `README.txt`, `THIRD_PARTY_NOTICES.md`, `BUILD-INFO.txt` | 안내문, 제3자 라이선스 고지, 빌드에 쓴 버전 |
+
+스크립트는 마지막에 배포본의 Java로 엔진을 띄워 응답하는지 확인한다. JDBC 드라이버는 넣지 않는다 (첫 연결 때 내려받거나 사용자가 지정).
 
 ## 문서
 

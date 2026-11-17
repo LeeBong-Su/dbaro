@@ -1,5 +1,6 @@
 # 빌드 결과
 build/
+dist/
 cmake-build-*/
 out/
 .gradle/
