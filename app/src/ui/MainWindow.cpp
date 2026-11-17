@@ -1,8 +1,11 @@
 #include "MainWindow.h"
 
+#include "ConnectionDialog.h"
 #include "ObjectExplorer.h"
 #include "QueryTab.h"
 #include "ResultPanel.h"
+#include "UiHelpers.h"
+#include "core/SecretStore.h"
 
 #include <QAction>
 #include <QApplication>
@@ -17,6 +20,7 @@
 #include <QPlainTextEdit>
 #include <QSettings>
 #include <QStatusBar>
+#include <QStringList>
 #include <QTabWidget>
 #include <QTextCursor>
 #include <QToolBar>
@@ -50,9 +54,11 @@ MainWindow::MainWindow(QWidget *parent)
             const QTextCursor cursor = tab->editor()->textCursor();
             updateCursorPosition(cursor.blockNumber() + 1, cursor.positionInBlock() + 1);
         }
+        syncConnectionComboToCurrentTab();
     });
 
     addQueryTab();
+    loadConnections();
     restoreLayout();
 }
 
@@ -70,9 +76,12 @@ void MainWindow::createActions()
     m_quitAction->setShortcut(QKeySequence::Quit);
     connect(m_quitAction, &QAction::triggered, this, &QWidget::close);
 
-    // 연결 관리 화면은 다음 단계에서 구현한다.
     m_newConnectionAction = new QAction(tr("New Connection..."), this);
-    m_newConnectionAction->setEnabled(false);
+    connect(m_newConnectionAction, &QAction::triggered, this, [this] { openConnectionDialog(true); });
+
+    m_manageConnectionsAction = new QAction(tr("Connections..."), this);
+    m_manageConnectionsAction->setToolTip(tr("Add, edit and delete connections"));
+    connect(m_manageConnectionsAction, &QAction::triggered, this, [this] { openConnectionDialog(false); });
 
     m_executeAction = new QAction(tr("Execute"), this);
     m_executeAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Return));
@@ -107,6 +116,12 @@ void MainWindow::createActions()
 void MainWindow::createDocks()
 {
     m_explorer = new ObjectExplorer(this);
+    connect(m_explorer, &ObjectExplorer::connectionActivated, this, [this](const QString &id) {
+        if (QueryTab *tab = currentQueryTab()) {
+            setTabConnection(tab, id);
+            syncConnectionComboToCurrentTab();
+        }
+    });
 
     m_explorerDock = new QDockWidget(tr("Database Explorer"), this);
     m_explorerDock->setObjectName(QStringLiteral("explorerDock"));
@@ -129,6 +144,7 @@ void MainWindow::createMenus()
 
     QMenu *databaseMenu = menuBar()->addMenu(tr("&Database"));
     databaseMenu->addAction(m_newConnectionAction);
+    databaseMenu->addAction(m_manageConnectionsAction);
 
     QMenu *queryMenu = menuBar()->addMenu(tr("&Query"));
     queryMenu->addAction(m_executeAction);
@@ -155,10 +171,15 @@ void MainWindow::createToolBar()
     m_connectionCombo = new QComboBox(toolBar);
     m_connectionCombo->setMinimumContentsLength(24);
     m_connectionCombo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
-    m_connectionCombo->addItem(tr("No connection"));
     m_connectionCombo->setToolTip(tr("Connection for the current tab"));
-    m_connectionCombo->setEnabled(false);
+    connect(m_connectionCombo, &QComboBox::currentIndexChanged, this, [this] {
+        if (m_syncingCombo)
+            return;
+        if (QueryTab *tab = currentQueryTab())
+            setTabConnection(tab, m_connectionCombo->currentData().toString());
+    });
     toolBar->addWidget(m_connectionCombo);
+    toolBar->addAction(m_manageConnectionsAction);
 
     toolBar->addSeparator();
     toolBar->addAction(m_executeAction);
@@ -172,7 +193,7 @@ void MainWindow::createToolBar()
 
 void MainWindow::createStatusBar()
 {
-    m_connectionLabel = new QLabel(tr("Not connected"), this);
+    m_connectionLabel = new QLabel(this);
     m_transactionLabel = new QLabel(this);
     m_cursorLabel = new QLabel(this);
     m_encodingLabel = new QLabel(QStringLiteral("UTF-8"), this);
@@ -194,6 +215,14 @@ void MainWindow::restoreLayout()
     restoreState(settings.value(kStateKey).toByteArray());
 }
 
+void MainWindow::loadConnections()
+{
+    QString error;
+    if (!m_store.load(&error))
+        statusBar()->showMessage(tr("Could not load connections: %1").arg(error));
+    refreshConnectionViews();
+}
+
 void MainWindow::closeEvent(QCloseEvent *event)
 {
     // TODO: 저장 안 된 SQL이나 커밋 안 된 트랜잭션이 있으면 닫기 전에 확인한다.
@@ -210,15 +239,18 @@ QueryTab *MainWindow::currentQueryTab() const
 
 QueryTab *MainWindow::addQueryTab()
 {
-    auto *tab = new QueryTab(m_tabs);
-    const int index = m_tabs->addTab(tab, tr("Query %1").arg(++m_tabCounter));
-    m_tabs->setCurrentIndex(index);
+    // 새 탭은 지금 탭의 연결을 그대로 쓴다.
+    const QString inheritedConnection = currentQueryTab() ? currentQueryTab()->connectionId() : QString();
 
+    auto *tab = new QueryTab(m_tabs);
     connect(tab, &QueryTab::cursorPositionChanged, this, [this, tab](int line, int column) {
         if (tab == currentQueryTab())
             updateCursorPosition(line, column);
     });
 
+    const int index = m_tabs->addTab(tab, tr("Query %1").arg(++m_tabCounter));
+    setTabConnection(tab, inheritedConnection);
+    m_tabs->setCurrentIndex(index);
     tab->editor()->setFocus();
     return tab;
 }
@@ -243,6 +275,115 @@ void MainWindow::executeCurrent(bool wholeScript)
     const QString what = wholeScript ? tr("Execute script") : tr("Execute statement");
     tab->resultPanel()->appendLog(tr("%1: not connected (execution is not implemented yet)").arg(what));
     tab->resultPanel()->showLog();
+}
+
+void MainWindow::openConnectionDialog(bool startNew)
+{
+    ConnectionDialog dialog(m_store.profiles(), this);
+    if (startNew) {
+        dialog.startNewConnection();
+    } else if (QueryTab *tab = currentQueryTab(); tab && !tab->connectionId().isEmpty()) {
+        dialog.selectConnection(tab->connectionId());
+    }
+
+    if (dialog.exec() != QDialog::Accepted)
+        return;
+
+    m_store.setProfiles(dialog.profiles());
+    QString error;
+    if (!m_store.save(&error)) {
+        QMessageBox::warning(this, tr("Connections"), tr("Could not save the connections.\n%1").arg(error));
+    }
+
+    // 비밀번호는 연결 파일이 아니라 OS 보안 저장소에 반영한다.
+    for (const QString &id : dialog.removedIds())
+        SecretStore::removePassword(id);
+
+    const QHash<QString, QString> pending = dialog.pendingPasswords();
+    QStringList failed;
+    for (const ConnectionProfile &profile : m_store.profiles()) {
+        if (!profile.savePassword) {
+            SecretStore::removePassword(profile.id);
+            continue;
+        }
+        const auto it = pending.constFind(profile.id);
+        if (it != pending.constEnd() && !SecretStore::savePassword(profile.id, profile.user, it.value(), &error))
+            failed << profile.name;
+    }
+    if (!failed.isEmpty()) {
+        QMessageBox::warning(this, tr("Connections"),
+                             tr("Could not save the password for: %1\n%2").arg(failed.join(QStringLiteral(", ")), error));
+    }
+
+    refreshConnectionViews();
+
+    // 연결을 고르지 않은 탭이면 대화상자에서 선택한 연결을 바로 쓴다.
+    QueryTab *tab = currentQueryTab();
+    if (tab && tab->connectionId().isEmpty() && !dialog.selectedId().isEmpty()) {
+        setTabConnection(tab, dialog.selectedId());
+        syncConnectionComboToCurrentTab();
+    }
+}
+
+void MainWindow::refreshConnectionViews()
+{
+    m_syncingCombo = true;
+    m_connectionCombo->clear();
+    m_connectionCombo->addItem(tr("No connection"), QString());
+    for (const ConnectionProfile &profile : m_store.profiles())
+        m_connectionCombo->addItem(colorSwatchIcon(Env::color(profile.environment)), profile.name, profile.id);
+    m_syncingCombo = false;
+
+    m_explorer->setConnections(m_store.profiles());
+
+    // 지워진 연결을 쓰던 탭은 연결을 해제하고, 나머지는 색상 등 바뀐 설정을 다시 반영한다.
+    for (int i = 0; i < m_tabs->count(); ++i) {
+        if (auto *tab = qobject_cast<QueryTab *>(m_tabs->widget(i)))
+            setTabConnection(tab, m_store.find(tab->connectionId()) ? tab->connectionId() : QString());
+    }
+    syncConnectionComboToCurrentTab();
+}
+
+void MainWindow::setTabConnection(QueryTab *tab, const QString &connectionId)
+{
+    const ConnectionProfile *profile = m_store.find(connectionId);
+    tab->setConnectionId(profile ? connectionId : QString());
+    tab->setConnectionColor(profile ? Env::color(profile->environment) : QColor());
+
+    const int index = m_tabs->indexOf(tab);
+    if (index >= 0)
+        m_tabs->setTabToolTip(index, profile ? profile->name : QString());
+
+    if (tab == currentQueryTab())
+        updateConnectionStatus();
+}
+
+void MainWindow::syncConnectionComboToCurrentTab()
+{
+    const QueryTab *tab = currentQueryTab();
+    const int index = tab ? m_connectionCombo->findData(tab->connectionId()) : 0;
+
+    m_syncingCombo = true;
+    m_connectionCombo->setCurrentIndex(index < 0 ? 0 : index);
+    m_syncingCombo = false;
+    updateConnectionStatus();
+}
+
+void MainWindow::updateConnectionStatus()
+{
+    const QueryTab *tab = currentQueryTab();
+    const ConnectionProfile *profile = tab ? m_store.find(tab->connectionId()) : nullptr;
+    if (!profile) {
+        m_connectionLabel->setText(tr("No connection"));
+        return;
+    }
+
+    QString text = tr("%1: %2 (not connected)").arg(Db::typeName(profile->type), profile->name);
+    if (profile->environment == Environment::Production)
+        text += tr(" · PRODUCTION");
+    if (profile->readOnly)
+        text += tr(" · read-only");
+    m_connectionLabel->setText(text);
 }
 
 void MainWindow::updateCursorPosition(int line, int column)

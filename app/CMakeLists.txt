@@ -9,8 +9,16 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(Qt6 6.8 REQUIRED COMPONENTS Widgets Network)
 qt_standard_project_setup()
 
-qt_add_executable(dbaro
-    src/main.cpp
+# 앱 코드 전체. 실행 파일과 이후의 테스트가 함께 링크한다.
+qt_add_library(dbaro_lib STATIC
+    src/core/ConnectionProfile.cpp
+    src/core/ConnectionProfile.h
+    src/core/ConnectionStore.cpp
+    src/core/ConnectionStore.h
+    src/core/SecretStore.cpp
+    src/core/SecretStore.h
+    src/ui/ConnectionDialog.cpp
+    src/ui/ConnectionDialog.h
     src/ui/MainWindow.cpp
     src/ui/MainWindow.h
     src/ui/ObjectExplorer.cpp
@@ -19,14 +27,26 @@ qt_add_executable(dbaro
     src/ui/QueryTab.h
     src/ui/ResultPanel.cpp
     src/ui/ResultPanel.h
+    src/ui/UiHelpers.h
 )
 
-target_include_directories(dbaro PRIVATE src)
+target_include_directories(dbaro_lib PUBLIC src)
 
-target_link_libraries(dbaro PRIVATE
+target_link_libraries(dbaro_lib PUBLIC
     Qt6::Widgets
     Qt6::Network
 )
+
+if(WIN32)
+    # SecretStore: Windows 자격 증명 관리자 (CredWriteW 등)
+    target_link_libraries(dbaro_lib PRIVATE Advapi32)
+endif()
+
+qt_add_executable(dbaro
+    src/main.cpp
+)
+
+target_link_libraries(dbaro PRIVATE dbaro_lib)
 
 set_target_properties(dbaro PROPERTIES
     WIN32_EXECUTABLE ON
