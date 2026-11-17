@@ -188,7 +188,7 @@ void SqlEditor::paintLineNumberArea(QPaintEvent *event)
 {
     QPainter painter(m_lineNumberArea);
     const QPalette pal = palette();
-    painter.fillRect(event->rect(), pal.color(QPalette::AlternateBase));
+    painter.fillRect(event->rect(), pal.color(QPalette::Base)); // 거터는 에디터와 같은 바탕
 
     // 현재 문장이 걸친 줄 범위 (Ctrl+Enter로 실행될 범위)
     int statementFirst = -1;
@@ -211,7 +211,7 @@ void SqlEditor::paintLineNumberArea(QPaintEvent *event)
     while (block.isValid() && top <= event->rect().bottom()) {
         if (block.isVisible() && bottom >= event->rect().top()) {
             if (number >= statementFirst && number <= statementLast)
-                painter.fillRect(width - kMarkerWidth, top, kMarkerWidth, bottom - top, pal.color(QPalette::Highlight));
+                painter.fillRect(width - kMarkerWidth, top, kMarkerWidth, bottom - top, pal.color(QPalette::Link));
             painter.setPen(pal.color(number == currentLine ? QPalette::Text : QPalette::PlaceholderText));
             painter.drawText(0, top, width - kMarkerWidth - 6, lineHeight, Qt::AlignRight | Qt::AlignTop,
                              QString::number(number + 1));
@@ -230,9 +230,7 @@ void SqlEditor::updateExtraSelections()
 
     if (!hasExtraCursors()) {
         QTextEdit::ExtraSelection line;
-        QColor color = pal.color(QPalette::Highlight);
-        color.setAlpha(isDark(pal) ? 40 : 22);
-        line.format.setBackground(color);
+        line.format.setBackground(pal.color(QPalette::AlternateBase));
         line.format.setProperty(QTextFormat::FullWidthSelection, true);
         line.cursor = textCursor();
         line.cursor.clearSelection();

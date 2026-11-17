@@ -56,6 +56,16 @@ DBaro는 Qt 6(C++) 앱과 Kotlin/JVM 엔진, 두 프로세스로 동작한다.
 - 앱과 엔진 사이 메시지 형식 (Protobuf 또는 MessagePack)과 결과 전송 형식 (Arrow IPC 등)
 - 자동완성용 파서 방식: tree-sitter 기반 또는 직접 작성 (입력 중인 잘못된 SQL을 견디고, 바뀐 부분만 다시 분석해야 함)
 
+## 화면과 테마
+
+배치는 IntelliJ 계열 IDE의 사용 방식을 참고하되, 아이콘과 색상은 DBaro 자체로 만든다.
+
+- 메인 툴바: 왼쪽은 연결 선택, 오른쪽은 실행·중지·트랜잭션
+- 창 왼쪽 끝의 도구 창 막대: 도구 창(Database Explorer 등)을 열고 닫는다
+- 쿼리 탭: 닫기 버튼은 선택된 탭과 마우스를 올린 탭에만 보이고, 가운데 클릭으로도 닫힌다
+- 테마(`app/src/ui/Theme`): OS와 상관없이 같은 모습이 되도록 Fusion 스타일에 자체 색상을 입힌다. 기본은 다크 그레이, View → Theme에서 라이트로 바꿀 수 있고 선택은 저장된다. Windows 제목 표시줄도 테마 밝기를 따른다
+- 아이콘(`app/resources/icons`): 16×16 SVG. `#ICON` 색은 그릴 때마다 현재 테마의 아이콘 색으로 바뀐다
+
 ## SQL 에디터
 
 `QPlainTextEdit`를 확장한 자체 컴포넌트(`app/src/ui/SqlEditor`)다.

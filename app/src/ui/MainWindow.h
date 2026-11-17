@@ -8,12 +8,16 @@ class QAction;
 class QComboBox;
 class QDockWidget;
 class QLabel;
-class QMenu;
 class QTabWidget;
+class QToolButton;
 class ObjectExplorer;
 class QueryTab;
 
-// 메인 창. 왼쪽 객체 탐색기, 가운데 쿼리 탭(에디터 + 결과), 위쪽 툴바, 아래 상태 표시줄.
+// 메인 창 (IntelliJ식 배치).
+// - 위: 메인 툴바. 왼쪽은 연결 선택, 오른쪽은 실행·중지·트랜잭션
+// - 왼쪽 끝: 도구 창 막대 (Database Explorer 열기/닫기)
+// - 가운데: 쿼리 탭 (에디터 + 결과)
+// - 아래: 상태 표시줄
 class MainWindow : public QMainWindow
 {
     Q_OBJECT
@@ -29,6 +33,7 @@ private:
     void createDocks();
     void createMenus();
     void createToolBar();
+    void createToolWindowStripe();
     void createStatusBar();
     void restoreLayout();
     void loadConnections();
@@ -52,6 +57,7 @@ private:
     QDockWidget *m_explorerDock = nullptr;
     ObjectExplorer *m_explorer = nullptr;
     QComboBox *m_connectionCombo = nullptr;
+    QToolButton *m_transactionButton = nullptr;
     bool m_syncingCombo = false;
 
     QAction *m_newTabAction = nullptr;
@@ -65,6 +71,8 @@ private:
     QAction *m_commitAction = nullptr;
     QAction *m_rollbackAction = nullptr;
     QAction *m_autoCommitAction = nullptr;
+    QAction *m_darkThemeAction = nullptr;
+    QAction *m_lightThemeAction = nullptr;
     QAction *m_aboutAction = nullptr;
 
     QLabel *m_connectionLabel = nullptr;

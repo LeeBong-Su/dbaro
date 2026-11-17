@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Qt 6.8 이상 (개발 PC는 6.10.3). LGPLv3로 쓰려면 동적 링크를 유지한다.
-find_package(Qt6 6.8 REQUIRED COMPONENTS Widgets Network)
+find_package(Qt6 6.8 REQUIRED COMPONENTS Widgets Network Svg)
 qt_standard_project_setup()
 
 # 앱 코드 전체. 실행 파일과 이후의 테스트가 함께 링크한다.
@@ -22,6 +22,10 @@ qt_add_library(dbaro_lib STATIC
     src/core/SqlSplitter.h
     src/ui/ConnectionDialog.cpp
     src/ui/ConnectionDialog.h
+    src/ui/EditorTabs.cpp
+    src/ui/EditorTabs.h
+    src/ui/Icons.cpp
+    src/ui/Icons.h
     src/ui/MainWindow.cpp
     src/ui/MainWindow.h
     src/ui/ObjectExplorer.cpp
@@ -34,7 +38,26 @@ qt_add_library(dbaro_lib STATIC
     src/ui/SqlEditor.h
     src/ui/SqlHighlighter.cpp
     src/ui/SqlHighlighter.h
+    src/ui/Theme.cpp
+    src/ui/Theme.h
     src/ui/UiHelpers.h
+)
+
+# 자체 아이콘 (:/icons/<이름>.svg)
+qt_add_resources(dbaro_lib "icons"
+    PREFIX "/"
+    BASE "resources"
+    FILES
+        resources/icons/add.svg
+        resources/icons/close.svg
+        resources/icons/commit.svg
+        resources/icons/database-add.svg
+        resources/icons/database.svg
+        resources/icons/hide.svg
+        resources/icons/rollback.svg
+        resources/icons/run-script.svg
+        resources/icons/run.svg
+        resources/icons/stop.svg
 )
 
 target_include_directories(dbaro_lib PUBLIC src)
@@ -42,6 +65,7 @@ target_include_directories(dbaro_lib PUBLIC src)
 target_link_libraries(dbaro_lib PUBLIC
     Qt6::Widgets
     Qt6::Network
+    Qt6::Svg
 )
 
 if(WIN32)

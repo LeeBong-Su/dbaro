@@ -1,36 +1,73 @@
 #include "MainWindow.h"
 
 #include "ConnectionDialog.h"
+#include "EditorTabs.h"
+#include "Icons.h"
 #include "ObjectExplorer.h"
 #include "QueryTab.h"
 #include "ResultPanel.h"
 #include "SqlEditor.h"
+#include "Theme.h"
 #include "UiHelpers.h"
 #include "core/SecretStore.h"
 #include "core/SqlDialect.h"
 
 #include <QAction>
+#include <QActionGroup>
 #include <QApplication>
 #include <QCloseEvent>
 #include <QComboBox>
 #include <QDockWidget>
+#include <QHBoxLayout>
 #include <QKeySequence>
 #include <QLabel>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
-#include <QPlainTextEdit>
 #include <QSettings>
 #include <QStatusBar>
 #include <QStringList>
 #include <QTabWidget>
 #include <QTextCursor>
 #include <QToolBar>
+#include <QToolButton>
 
 namespace {
 const auto kGeometryKey = QStringLiteral("mainWindow/geometry");
 const auto kStateKey = QStringLiteral("mainWindow/state");
+
+QString withShortcut(const QString &text, const QKeySequence &shortcut)
+{
+    return QStringLiteral("%1 (%2)").arg(text, shortcut.toString(QKeySequence::NativeText));
 }
+
+// 도구 창 제목 줄: 제목과 숨기기(−) 버튼. 제목 줄을 끌면 도구 창을 옮길 수 있다.
+QWidget *createDockTitleBar(QDockWidget *dock)
+{
+    auto *bar = new QWidget(dock);
+    bar->setObjectName(QStringLiteral("dockTitleBar"));
+    bar->setAttribute(Qt::WA_StyledBackground);
+
+    auto *title = new QLabel(dock->windowTitle(), bar);
+    title->setObjectName(QStringLiteral("dockTitle"));
+
+    auto *hide = new QToolButton(bar);
+    hide->setIcon(Icons::get(QStringLiteral("hide")));
+    hide->setIconSize(QSize(14, 14));
+    hide->setAutoRaise(true);
+    hide->setFocusPolicy(Qt::NoFocus);
+    hide->setToolTip(QObject::tr("Hide"));
+    QObject::connect(hide, &QToolButton::clicked, dock, &QDockWidget::hide);
+
+    auto *layout = new QHBoxLayout(bar);
+    layout->setContentsMargins(10, 3, 4, 3);
+    layout->setSpacing(2);
+    layout->addWidget(title);
+    layout->addStretch();
+    layout->addWidget(hide);
+    return bar;
+}
+} // namespace
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -38,16 +75,14 @@ MainWindow::MainWindow(QWidget *parent)
     setWindowTitle(QStringLiteral("DBaro"));
     resize(1280, 800);
 
-    m_tabs = new QTabWidget(this);
-    m_tabs->setDocumentMode(true);
-    m_tabs->setTabsClosable(true);
-    m_tabs->setMovable(true);
+    m_tabs = new EditorTabs(this);
     setCentralWidget(m_tabs);
 
     createActions();
     createDocks();
     createMenus();
     createToolBar();
+    createToolWindowStripe();
     createStatusBar();
 
     connect(m_tabs, &QTabWidget::tabCloseRequested, this, &MainWindow::closeQueryTab);
@@ -66,8 +101,9 @@ MainWindow::MainWindow(QWidget *parent)
 
 void MainWindow::createActions()
 {
-    m_newTabAction = new QAction(tr("New Query Tab"), this);
+    m_newTabAction = new QAction(Icons::get(QStringLiteral("add")), tr("New Query Tab"), this);
     m_newTabAction->setShortcut(QKeySequence::AddTab);
+    m_newTabAction->setToolTip(withShortcut(tr("New query tab"), m_newTabAction->shortcut()));
     connect(m_newTabAction, &QAction::triggered, this, [this] { addQueryTab(); });
 
     m_closeTabAction = new QAction(tr("Close Tab"), this);
@@ -78,35 +114,49 @@ void MainWindow::createActions()
     m_quitAction->setShortcut(QKeySequence::Quit);
     connect(m_quitAction, &QAction::triggered, this, &QWidget::close);
 
-    m_newConnectionAction = new QAction(tr("New Connection..."), this);
+    m_newConnectionAction = new QAction(Icons::get(QStringLiteral("database-add")), tr("New Connection..."), this);
     connect(m_newConnectionAction, &QAction::triggered, this, [this] { openConnectionDialog(true); });
 
-    m_manageConnectionsAction = new QAction(tr("Connections..."), this);
+    m_manageConnectionsAction = new QAction(Icons::get(QStringLiteral("database")), tr("Connections..."), this);
     m_manageConnectionsAction->setToolTip(tr("Add, edit and delete connections"));
     connect(m_manageConnectionsAction, &QAction::triggered, this, [this] { openConnectionDialog(false); });
 
-    m_executeAction = new QAction(tr("Execute"), this);
+    m_executeAction = new QAction(Icons::get(QStringLiteral("run")), tr("Execute"), this);
     m_executeAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Return));
-    m_executeAction->setToolTip(tr("Execute the statement at the cursor (Ctrl+Enter)"));
+    m_executeAction->setToolTip(withShortcut(tr("Execute the statement at the cursor"), m_executeAction->shortcut()));
     connect(m_executeAction, &QAction::triggered, this, [this] { executeCurrent(false); });
 
-    m_executeScriptAction = new QAction(tr("Execute Script"), this);
+    m_executeScriptAction = new QAction(Icons::get(QStringLiteral("run-script")), tr("Execute Script"), this);
     m_executeScriptAction->setShortcut(QKeySequence(Qt::Key_F5));
-    m_executeScriptAction->setToolTip(tr("Execute the whole script (F5)"));
+    m_executeScriptAction->setToolTip(withShortcut(tr("Execute the whole script"), m_executeScriptAction->shortcut()));
     connect(m_executeScriptAction, &QAction::triggered, this, [this] { executeCurrent(true); });
 
     // 연결과 실행이 생기기 전까지는 비활성.
-    m_cancelAction = new QAction(tr("Cancel"), this);
+    m_cancelAction = new QAction(Icons::get(QStringLiteral("stop")), tr("Cancel"), this);
+    m_cancelAction->setToolTip(tr("Cancel the running statement"));
     m_cancelAction->setEnabled(false);
-    m_commitAction = new QAction(tr("Commit"), this);
+    m_commitAction = new QAction(Icons::get(QStringLiteral("commit")), tr("Commit"), this);
     m_commitAction->setEnabled(false);
-    m_rollbackAction = new QAction(tr("Rollback"), this);
+    m_rollbackAction = new QAction(Icons::get(QStringLiteral("rollback")), tr("Rollback"), this);
     m_rollbackAction->setEnabled(false);
 
     m_autoCommitAction = new QAction(tr("Auto-commit"), this);
     m_autoCommitAction->setCheckable(true);
     m_autoCommitAction->setChecked(false);
     connect(m_autoCommitAction, &QAction::toggled, this, [this] { updateTransactionLabel(); });
+
+    // 테마
+    auto *themeGroup = new QActionGroup(this);
+    m_darkThemeAction = new QAction(tr("Dark"), themeGroup);
+    m_lightThemeAction = new QAction(tr("Light"), themeGroup);
+    for (QAction *action : {m_darkThemeAction, m_lightThemeAction})
+        action->setCheckable(true);
+    (Theme::current() == Theme::Kind::Light ? m_lightThemeAction : m_darkThemeAction)->setChecked(true);
+    connect(themeGroup, &QActionGroup::triggered, this, [this](QAction *action) {
+        const Theme::Kind kind = action == m_lightThemeAction ? Theme::Kind::Light : Theme::Kind::Dark;
+        Theme::apply(kind);
+        Theme::save(kind);
+    });
 
     m_aboutAction = new QAction(tr("About DBaro"), this);
     connect(m_aboutAction, &QAction::triggered, this, [this] {
@@ -128,12 +178,16 @@ void MainWindow::createDocks()
     m_explorerDock = new QDockWidget(tr("Database Explorer"), this);
     m_explorerDock->setObjectName(QStringLiteral("explorerDock"));
     m_explorerDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+    m_explorerDock->setFeatures(QDockWidget::DockWidgetClosable | QDockWidget::DockWidgetMovable);
     m_explorerDock->setWidget(m_explorer);
+    m_explorerDock->setTitleBarWidget(createDockTitleBar(m_explorerDock));
     addDockWidget(Qt::LeftDockWidgetArea, m_explorerDock);
     resizeDocks({m_explorerDock}, {280}, Qt::Horizontal);
 
     QAction *toggle = m_explorerDock->toggleViewAction();
+    toggle->setIcon(Icons::get(QStringLiteral("database")));
     toggle->setShortcut(QKeySequence(Qt::ALT | Qt::Key_1));
+    toggle->setToolTip(withShortcut(tr("Database Explorer"), toggle->shortcut()));
 }
 
 void MainWindow::createMenus()
@@ -159,6 +213,10 @@ void MainWindow::createMenus()
 
     QMenu *viewMenu = menuBar()->addMenu(tr("&View"));
     viewMenu->addAction(m_explorerDock->toggleViewAction());
+    viewMenu->addSeparator();
+    QMenu *themeMenu = viewMenu->addMenu(tr("Theme"));
+    themeMenu->addAction(m_darkThemeAction);
+    themeMenu->addAction(m_lightThemeAction);
 
     QMenu *helpMenu = menuBar()->addMenu(tr("&Help"));
     helpMenu->addAction(m_aboutAction);
@@ -169,9 +227,15 @@ void MainWindow::createToolBar()
     QToolBar *toolBar = addToolBar(tr("Main"));
     toolBar->setObjectName(QStringLiteral("mainToolBar"));
     toolBar->setMovable(false);
+    toolBar->setFloatable(false);
+    toolBar->setIconSize(QSize(18, 18));
+    toolBar->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    toolBar->toggleViewAction()->setVisible(false);
 
+    // 왼쪽: 연결
     m_connectionCombo = new QComboBox(toolBar);
-    m_connectionCombo->setMinimumContentsLength(24);
+    m_connectionCombo->setObjectName(QStringLiteral("connectionCombo"));
+    m_connectionCombo->setMinimumContentsLength(22);
     m_connectionCombo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
     m_connectionCombo->setToolTip(tr("Connection for the current tab"));
     connect(m_connectionCombo, &QComboBox::currentIndexChanged, this, [this] {
@@ -182,15 +246,44 @@ void MainWindow::createToolBar()
     });
     toolBar->addWidget(m_connectionCombo);
     toolBar->addAction(m_manageConnectionsAction);
+    toolBar->addAction(m_newTabAction);
 
-    toolBar->addSeparator();
+    // 가운데 여백: 실행 관련 버튼을 오른쪽 끝으로 민다
+    auto *spacer = new QWidget(toolBar);
+    spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    toolBar->addWidget(spacer);
+
+    // 오른쪽: 실행과 트랜잭션
     toolBar->addAction(m_executeAction);
     toolBar->addAction(m_executeScriptAction);
     toolBar->addAction(m_cancelAction);
     toolBar->addSeparator();
+
+    m_transactionButton = new QToolButton(toolBar);
+    m_transactionButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    m_transactionButton->setPopupMode(QToolButton::InstantPopup);
+    m_transactionButton->setToolTip(tr("Transaction mode"));
+    auto *transactionMenu = new QMenu(m_transactionButton);
+    transactionMenu->addAction(m_autoCommitAction);
+    m_transactionButton->setMenu(transactionMenu);
+    toolBar->addWidget(m_transactionButton);
+
     toolBar->addAction(m_commitAction);
     toolBar->addAction(m_rollbackAction);
-    toolBar->addAction(m_autoCommitAction);
+}
+
+void MainWindow::createToolWindowStripe()
+{
+    // 창 왼쪽 끝의 세로 아이콘 막대. 누르면 해당 도구 창이 열리고 닫힌다.
+    auto *stripe = new QToolBar(tr("Tool Windows"), this);
+    stripe->setObjectName(QStringLiteral("toolWindowStripe"));
+    stripe->setMovable(false);
+    stripe->setFloatable(false);
+    stripe->setIconSize(QSize(20, 20));
+    stripe->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    stripe->toggleViewAction()->setVisible(false);
+    stripe->addAction(m_explorerDock->toggleViewAction());
+    addToolBar(Qt::LeftToolBarArea, stripe);
 }
 
 void MainWindow::createStatusBar()
@@ -204,6 +297,7 @@ void MainWindow::createStatusBar()
         label->setContentsMargins(8, 0, 8, 0);
         statusBar()->addPermanentWidget(label);
     }
+    statusBar()->setSizeGripEnabled(false);
 
     updateTransactionLabel();
     updateCursorPosition(1, 1);
@@ -413,5 +507,7 @@ void MainWindow::updateCursorPosition(int line, int column)
 
 void MainWindow::updateTransactionLabel()
 {
-    m_transactionLabel->setText(m_autoCommitAction->isChecked() ? tr("Auto-commit") : tr("Manual commit"));
+    const QString mode = m_autoCommitAction->isChecked() ? tr("Auto-commit") : tr("Manual commit");
+    m_transactionLabel->setText(mode);
+    m_transactionButton->setText(mode + QStringLiteral(" ▾"));
 }

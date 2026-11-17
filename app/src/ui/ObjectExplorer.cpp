@@ -16,6 +16,7 @@ ObjectExplorer::ObjectExplorer(QWidget *parent)
     : QWidget(parent)
 {
     m_filter = new QLineEdit(this);
+    m_filter->setObjectName(QStringLiteral("explorerFilter"));
     m_filter->setPlaceholderText(tr("Filter objects"));
     m_filter->setClearButtonEnabled(true);
 
@@ -27,14 +28,16 @@ ObjectExplorer::ObjectExplorer(QWidget *parent)
     m_proxy->setRecursiveFilteringEnabled(true);
 
     m_tree = new QTreeView(this);
+    m_tree->setObjectName(QStringLiteral("explorerTree"));
+    m_tree->setFrameShape(QFrame::NoFrame);
     m_tree->setModel(m_proxy);
     m_tree->setHeaderHidden(true);
     m_tree->setUniformRowHeights(true);
     m_tree->setEditTriggers(QAbstractItemView::NoEditTriggers);
 
     auto *layout = new QVBoxLayout(this);
-    layout->setContentsMargins(4, 4, 4, 4);
-    layout->setSpacing(4);
+    layout->setContentsMargins(6, 6, 0, 0);
+    layout->setSpacing(6);
     layout->addWidget(m_filter);
     layout->addWidget(m_tree);
 

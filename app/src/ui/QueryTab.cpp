@@ -13,10 +13,12 @@ QueryTab::QueryTab(QWidget *parent)
     : QWidget(parent)
 {
     m_colorStrip = new QFrame(this);
-    m_colorStrip->setFixedHeight(4);
+    m_colorStrip->setFixedHeight(3);
     m_colorStrip->hide();
 
     m_editor = new SqlEditor(this);
+    m_editor->setObjectName(QStringLiteral("sqlEditor"));
+    m_editor->setFrameShape(QFrame::NoFrame);
     m_editor->setPlaceholderText(tr("Write SQL here. Ctrl+Enter runs the current statement, F5 runs the script."));
 
     m_results = new ResultPanel(this);
@@ -27,6 +29,7 @@ QueryTab::QueryTab(QWidget *parent)
     m_splitter->setStretchFactor(0, 3);
     m_splitter->setStretchFactor(1, 2);
     m_splitter->setChildrenCollapsible(false);
+    m_splitter->setHandleWidth(2);
 
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
