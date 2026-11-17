@@ -1,0 +1,23 @@
+# 빌드 결과
+build/
+cmake-build-*/
+out/
+.gradle/
+engine/build/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+*.user
+CMakeUserPresets.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 로컬 설정과 비밀 값
+dev/.env
+
+# 벤더 JDBC 드라이버 (재배포 불가 - 각자 받아서 둔다)
+dev/drivers/

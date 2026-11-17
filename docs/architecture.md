@@ -1,0 +1,50 @@
+# DBaro 아키텍처
+
+DBaro는 Qt 6(C++) 앱과 Kotlin/JVM 엔진, 두 프로세스로 동작한다.
+기준은 개발 속도가 아니라 제품 완성도다.
+
+```
+[app: Qt 6 / C++]   SQL 에디터 · 결과 그리드 · 객체 탐색기 · SQL 파서와 자동완성 · 메타데이터 캐시
+      │  표준 입출력, 결과는 페이지 단위로 전송 (protocol/README.md)
+[engine: Kotlin/JVM]  JDBC 드라이버 동적 로딩 · 실행/취소 · 메타데이터 조회
+```
+
+## 왜 이렇게 나눴나
+
+- **엔진이 JVM인 이유:** 1순위 Oracle과 5순위 Tibero를 가장 정확하게 다루는 건 벤더 JDBC 드라이버다.
+  Tibero JDBC는 순수 Java 드라이버(Type 4)라 jar 하나로 모든 OS에서 동작한다.
+- **앱이 Qt인 이유:** 반응성, 한글 입력(IME), 모니터별 화면 배율, OS 간 일관성, 프레임워크 수명을 함께 보면 가장 균형이 좋다.
+- **별도 프로세스인 이유:** 드라이버가 응답 없이 멈추거나 JVM이 GC로 잠깐 서도 앱 화면은 계속 반응한다.
+  드라이버가 죽으면 엔진만 다시 띄운다.
+- **파서와 자동완성이 앱 쪽인 이유:** 키 입력마다 프로세스를 오가지 않고, GC 영향도 받지 않게 한다.
+
+## 지원 DB와 방언 계열
+
+| 계열 | DB | 메타데이터 | 스크립트 문장 분리 |
+|---|---|---|---|
+| oracle | Oracle, Tibero | `USER_*`, `DBA_*`, `V$*` 뷰. `ALL_*` 뷰는 객체가 많으면 느림 | PL/SQL 블록, 한 줄에 `/`만 있는 블록 끝 |
+| mysql | MySQL, MariaDB | `information_schema`, `SHOW` 명령 | `DELIMITER` (클라이언트 명령) |
+| postgres | PostgreSQL | `pg_catalog` | `$$ ... $$` 함수 본문 |
+
+## JDBC 드라이버 배포 정책
+
+드라이버는 앱에 넣지 않고 첫 연결 때 Maven Central에서 내려받는다. Tibero만 사용자가 jar를 지정한다.
+
+| DB | 드라이버 | 라이선스 | 정책 |
+|---|---|---|---|
+| Oracle | ojdbc11 | Oracle 무료 이용 약관(FUTC) | 내려받기 |
+| MariaDB | MariaDB Connector/J | LGPL 2.1 | 내려받기 |
+| MySQL | MySQL Connector/J | GPLv2 + FOSS 예외 | 내려받기 (함께 배포하지 않음) |
+| PostgreSQL | pgJDBC | BSD-2 | 내려받기 |
+| Tibero | `tibero7-jdbc.jar` | 벤더 독점 | 사용자가 jar 경로 지정 |
+
+## 성능 기준
+
+목표 수치는 `../bench/README.md`에 있다. CI에서 매번 측정한다.
+
+## 아직 정하지 않은 것
+
+- 앱과 엔진 사이 메시지 형식 (Protobuf 또는 MessagePack)과 결과 전송 형식 (Arrow IPC 등)
+- SQL 에디터 구현 방식: 직접 구현 또는 KTextEditor 기반
+- 에디터용 파서 방식: tree-sitter 기반 또는 직접 작성 (입력 중인 잘못된 SQL을 견디고, 바뀐 부분만 다시 분석해야 함)
+- Qt 라이선스: LGPLv3 동적 링크 유지 또는 상용 라이선스
