@@ -19,13 +19,13 @@ dbaro/
 
 | 도구 | 버전 | 용도 |
 |---|---|---|
-| Qt | 6.8 LTS 이상 | 앱 |
+| Qt | 6.8 이상 (개발 PC는 6.10.3) | 앱 |
 | CMake | 3.21 이상 | 앱 빌드 |
 | C++ 컴파일러 | C++20 지원 (MSVC 2022, Clang, GCC) | 앱 빌드 |
-| JDK | 21 | 엔진 |
-| Gradle | 8 이상 | 엔진 빌드 (Wrapper 생성 후에는 불필요) |
-| Docker | Compose v2 | 테스트용 DB |
+| JDK | 21 | 엔진 (Gradle은 Wrapper가 받아 쓴다) |
+| Docker 호환 도구 | Compose v2 | 테스트용 DB |
 
+Windows 설치 방법은 [docs/dev-setup-windows.md](docs/dev-setup-windows.md)에 있다.
 빌드 방법은 `app/README.md`, `engine/README.md`에 있다.
 
 ## 문서

@@ -17,5 +17,14 @@ Qt 6.8 이상과 CMake 3.21 이상이 필요하다. 저장소 루트에서:
 
 ```bash
 cmake -S app -B build/app -DCMAKE_PREFIX_PATH=<Qt 설치 경로>
-cmake --build build/app
+cmake --build build/app --config Release
 ```
+
+Windows 개발 PC 예시 (Qt 6.10.3, MSVC 2022):
+
+```powershell
+cmake -S app -B build/app -G "Visual Studio 17 2022" -A x64 -DCMAKE_PREFIX_PATH=C:/Qt/6.10.3/msvc2022_64
+cmake --build build/app --config Release
+```
+
+실행하려면 Qt DLL이 필요하다. `C:\Qt\6.10.3\msvc2022_64\bin`을 PATH에 넣거나, 배포용으로는 `windeployqt`로 DLL을 exe 옆에 복사한다.

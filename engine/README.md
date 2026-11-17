@@ -15,10 +15,12 @@ JDBC 드라이버는 빌드 의존성에 넣지 않는다. 라이선스 정책�
 
 ## 빌드
 
-JDK 21과 Gradle이 필요하다. Gradle Wrapper는 아직 없으므로 Gradle 설치 후 이 폴더에서 한 번 만든다.
+JDK 21이 필요하다. Gradle은 따로 설치하지 않는다. Wrapper(`gradlew`)가 Gradle 8.14.3을 내려받아 쓴다.
+
+Gradle 8.14는 JDK 24보다 새로운 JDK에서 실행되지 않는다. `JAVA_HOME`이 JDK 21을 가리키게 둔다.
 
 ```bash
-gradle wrapper
+./gradlew build
 ./gradlew run
 ```
 
