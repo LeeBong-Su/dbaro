@@ -1,3 +1,4 @@
+#include "ui/Icons.h"
 #include "ui/MainWindow.h"
 #include "ui/Theme.h"
 
@@ -9,6 +10,7 @@ int main(int argc, char *argv[])
     QApplication::setOrganizationName("DBaro");
     QApplication::setApplicationName("DBaro");
     QApplication::setApplicationVersion("0.1.0");
+    QApplication::setWindowIcon(Icons::get(QStringLiteral("dbaro")));
 
     // 창을 만들기 전에 테마를 적용한다 (기본: 다크 그레이).
     Theme::apply(Theme::load());

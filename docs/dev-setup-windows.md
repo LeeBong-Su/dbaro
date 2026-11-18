@@ -53,6 +53,16 @@ cd engine
 
 앱은 `engine/build/install/dbaro-engine`을 자동으로 찾아 엔진을 띄운다.
 
-## 4. 테스트용 DB
+## 4. MSI 설치 프로그램 도구 (배포할 때만)
+
+```powershell
+winget install -e --id Microsoft.DotNet.SDK.8
+dotnet tool install --global wix --version 5.0.2
+```
+
+WiX는 v5를 쓴다. v6부터는 연 매출 1만 달러를 넘는 조직이 쓰면 유지보수 비용(GitHub 후원)을 내야 하고, v7부터는 EULA 동의가 강제된다
+([WiX 문서](https://docs.firegiant.com/wix/osmf/)).
+
+## 5. 테스트용 DB
 
 Docker 호환 도구는 아직 설치하지 않았다. Docker Desktop은 직원 250명 이상 또는 매출 1천만 달러 이상인 회사에서 업무용으로 쓰면 유료 구독이 필요하다. 무료 대안은 Rancher Desktop이다.

@@ -1,0 +1,52 @@
+<!--
+  DBaro Windows 설치 프로그램 (WiX v5). scripts/build-msi-windows.ps1 이 빌드한다.
+
+  - 사용자별 설치가 기본이다: 더블클릭하면 관리자 권한 없이 %LOCALAPPDATA%\Programs\DBaro 에 설치된다.
+    관리자는 "msiexec /i DBaro.msi ALLUSERS=1" 로 전체 사용자용(Program Files)으로 설치할 수 있다.
+  - 설치 파일은 package-windows.ps1 이 만든 배포 폴더(-bindpath Stage=...)를 통째로 담는다.
+  - UpgradeCode는 절대 바꾸지 않는다. 바꾸면 기존 설치를 업그레이드하지 못하고 따로 설치된다.
+  - 사용자 데이터(%APPDATA%\DBaro, 자격 증명 관리자, HKCU\Software\DBaro\DBaro)는 제거해도 남는다.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="DBaro"
+           Manufacturer="DBaro"
+           Version="$(var.Version)"
+           UpgradeCode="FE197C7F-2B18-425E-BD71-F42D51C2027E"
+           Scope="perUserOrMachine"
+           Compressed="yes">
+
+    <SummaryInformation Description="DBaro $(var.Version) - cross-platform database tool" />
+
+    <!-- 새 버전이 이전 버전을 대신한다. 같은 버전을 다시 설치해도 덮어쓴다 (개발 중 재설치). -->
+    <MajorUpgrade AllowSameVersionUpgrades="yes"
+                  DowngradeErrorMessage="A newer version of DBaro is already installed." />
+
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <!-- 프로그램 추가/제거 목록 -->
+    <Icon Id="DBaroIcon" SourceFile="$(var.IconFile)" />
+    <Property Id="ARPPRODUCTICON" Value="DBaroIcon" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/LeeBong-Su/dbaro" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+
+    <StandardDirectory Id="ProgramFiles6432Folder">
+      <Directory Id="INSTALLFOLDER" Name="DBaro">
+        <Files Include="!(bindpath.Stage)\**" />
+      </Directory>
+    </StandardDirectory>
+
+    <!-- 시작 메뉴 바로 가기. 사용자별 설치에서도 동작하도록 키 경로는 HKMU(사용자별이면 HKCU) 레지스트리 값이다. -->
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Component Id="StartMenuShortcut">
+        <Shortcut Id="DBaroShortcut"
+                  Name="DBaro"
+                  Description="Cross-platform database tool"
+                  Target="[INSTALLFOLDER]dbaro.exe"
+                  WorkingDirectory="INSTALLFOLDER"
+                  Icon="DBaroIcon" />
+        <RegistryValue Root="HKMU" Key="Software\DBaro\Installer" Name="StartMenuShortcut"
+                       Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+  </Package>
+</Wix>

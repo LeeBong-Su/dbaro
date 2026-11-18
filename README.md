@@ -48,6 +48,19 @@ Windows 설치 방법은 [docs/dev-setup-windows.md](docs/dev-setup-windows.md)�
 
 스크립트는 마지막에 배포본의 Java로 엔진을 띄워 응답하는지 확인한다. JDBC 드라이버는 넣지 않는다 (첫 연결 때 내려받거나 사용자가 지정).
 
+### MSI 설치 프로그램
+
+```powershell
+.\scripts\build-msi-windows.ps1            # 배포 폴더까지 새로 만든다. 이미 있으면 -SkipPackage
+```
+
+`dist\DBaro-<버전>-windows-x64.msi`가 만들어진다 (WiX v5, `packaging\windows\DBaro.wxs`).
+
+- 더블클릭하면 관리자 권한 없이 사용자별로 설치된다 (`%LOCALAPPDATA%\Programs\DBaro`, 시작 메뉴 바로 가기).
+- 전체 사용자용: `msiexec /i DBaro-<버전>-windows-x64.msi ALLUSERS=1` (관리자, `Program Files`에 설치)
+- 새 버전 MSI를 설치하면 이전 버전을 대신한다. 제거해도 사용자 데이터(연결 정보, 비밀번호, 설정)는 남는다.
+- WiX는 v5를 쓴다. v6 이상은 매출 기준 유지보수 비용과 EULA 동의 조건이 있다.
+
 ## 문서
 
 - [아키텍처](docs/architecture.md)

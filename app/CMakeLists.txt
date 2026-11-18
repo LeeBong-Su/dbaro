@@ -63,6 +63,7 @@ qt_add_resources(dbaro_lib "icons"
         resources/icons/commit.svg
         resources/icons/database-add.svg
         resources/icons/database.svg
+        resources/icons/dbaro.svg
         resources/icons/hide.svg
         resources/icons/rollback.svg
         resources/icons/run-script.svg
@@ -88,6 +89,13 @@ qt_add_executable(dbaro
 )
 
 target_link_libraries(dbaro PRIVATE dbaro_lib)
+
+if(WIN32)
+    # 실행 파일 아이콘과 버전 정보 (탐색기, 작업 표시줄, 설치 프로그램에 보인다)
+    set(DBARO_ICON_PATH "${CMAKE_CURRENT_SOURCE_DIR}/resources/dbaro.ico")
+    configure_file(resources/dbaro.rc.in "${CMAKE_CURRENT_BINARY_DIR}/dbaro.rc" @ONLY)
+    target_sources(dbaro PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/dbaro.rc")
+endif()
 
 set_target_properties(dbaro PROPERTIES
     WIN32_EXECUTABLE ON
