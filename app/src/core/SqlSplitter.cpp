@@ -77,6 +77,18 @@ bool startsPlsqlBlock(const QStringList &head)
            || kind == u"TYPE" || kind == u"LIBRARY";
 }
 
+// SQL*Plus·psql처럼 줄 끝에서 끝나는 클라이언트 명령 (DESC[RIBE]). 엔진이 직접 처리한다.
+bool isLineCommand(QStringView word)
+{
+    static const QStringList commands{QStringLiteral("DESC"), QStringLiteral("DESCR"), QStringLiteral("DESCRI"),
+                                      QStringLiteral("DESCRIB"), QStringLiteral("DESCRIBE")};
+    for (const QString &command : commands) {
+        if (word.compare(command, Qt::CaseInsensitive) == 0)
+            return true;
+    }
+    return false;
+}
+
 } // namespace
 
 QList<SqlStatement> SqlSplitter::split(const QString &s, SqlDialect dialect)
@@ -92,6 +104,7 @@ QList<SqlStatement> SqlSplitter::split(const QString &s, SqlDialect dialect)
     int stmtStart = -1;
     bool hasCode = false;
     bool plsqlBlock = false;
+    bool lineCommand = false; // DESC: ';' 없이 줄 끝에서 끝난다 (MySQL의 DESC는 서버 SQL이라 제외)
     QStringList head; // 문장 앞쪽 단어들 (대문자)
 
     auto finish = [&](int end, int terminatorEnd) {
@@ -109,6 +122,7 @@ QList<SqlStatement> SqlSplitter::split(const QString &s, SqlDialect dialect)
         stmtStart = -1;
         hasCode = false;
         plsqlBlock = false;
+        lineCommand = false;
         head.clear();
     };
     auto markStart = [&](int pos) {
@@ -150,6 +164,8 @@ QList<SqlStatement> SqlSplitter::split(const QString &s, SqlDialect dialect)
         const QChar next = i + 1 < n ? s[i + 1] : QChar();
 
         if (c == u'\n') {
+            if (lineCommand)
+                finish(i, i);
             atLineStart = true;
             ++i;
             continue;
@@ -226,6 +242,8 @@ QList<SqlStatement> SqlSplitter::split(const QString &s, SqlDialect dialect)
             while (j < n && isWordChar(s[j]) && !(mysql && QStringView(s).mid(j, delimiter.size()) == delimiter))
                 ++j;
             const QStringView word = QStringView(s).mid(i, j - i);
+            if (!hasCode && (oracle || postgres))
+                lineCommand = isLineCommand(word);
             markCode(i);
 
             // Oracle q'[...]' / nq'[...]' 문자열

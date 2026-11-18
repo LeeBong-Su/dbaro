@@ -1,5 +1,9 @@
 #include "SqlEditor.h"
+#include "Theme.h"
 
+#include "SqlCompleter.h"
+
+#include "ScrollHelpers.h"
 #include "SqlHighlighter.h"
 
 #include <QClipboard>
@@ -89,6 +93,8 @@ SqlEditor::SqlEditor(QWidget *parent)
 
     m_lineNumberArea = new LineNumberArea(this);
     m_highlighter = new SqlHighlighter(document());
+    enableShiftWheelHorizontalScroll(this);
+    m_completer = new SqlCompleter(this);
     m_highlighter->setDarkTheme(isDark(palette()));
 
     m_parseTimer = new QTimer(this);
@@ -237,6 +243,13 @@ void SqlEditor::updateExtraSelections()
         selections.append(line);
     }
 
+    for (int i = 0; i < m_searchMatches.size(); ++i) {
+        QTextEdit::ExtraSelection match;
+        match.cursor = m_searchMatches[i];
+        match.format.setBackground(i == m_currentSearchMatch ? Theme::currentMatchColor() : Theme::searchMatchColor());
+        selections.append(match);
+    }
+
     appendBracketMatch(selections);
 
     for (const QTextCursor &cursor : m_cursors) {
@@ -250,6 +263,13 @@ void SqlEditor::updateExtraSelections()
     }
 
     setExtraSelections(selections);
+}
+
+void SqlEditor::setSearchMatches(const QList<QTextCursor> &matches, int current)
+{
+    m_searchMatches = matches;
+    m_currentSearchMatch = current;
+    updateExtraSelections();
 }
 
 void SqlEditor::appendBracketMatch(QList<QTextEdit::ExtraSelection> &selections) const
@@ -334,7 +354,42 @@ void SqlEditor::updateCurrentStatement()
 // ---------------------------------------------------------------------------
 // 키 입력
 
+QString SqlEditor::objectNameAtCursor() const
+{
+    const QTextCursor cursor = textCursor();
+    if (cursor.hasSelection()) {
+        QString text = cursor.selectedText();
+        text.replace(QChar::ParagraphSeparator, u' ');
+        return text.trimmed();
+    }
+    const QString line = cursor.block().text();
+    const int at = cursor.positionInBlock();
+    auto nameChar = [](QChar c) {
+        return c.isLetterOrNumber() || c == u'_' || c == u'$' || c == u'#' || c == u'.' || c == u'"' || c == u'`';
+    };
+    int start = at;
+    while (start > 0 && nameChar(line.at(start - 1)))
+        --start;
+    int end = at;
+    while (end < line.size() && nameChar(line.at(end)))
+        ++end;
+    return line.mid(start, end - start);
+}
+
 void SqlEditor::keyPressEvent(QKeyEvent *event)
+{
+    // 자동완성 목록이 열려 있으면 Enter/Tab/Esc는 목록이 처리한다.
+    if (m_completer->keyPressBefore(event))
+        return;
+    if (event->key() == Qt::Key_Space && (event->modifiers() & Qt::ControlModifier)) {
+        m_completer->trigger(true);
+        return;
+    }
+    processKey(event);
+    m_completer->keyPressAfter(event);
+}
+
+void SqlEditor::processKey(QKeyEvent *event)
 {
     // 수식 키와 한/영·한자 키만 눌렀을 때는 세로 커서와 사각형 선택 상태를 그대로 둔다.
     switch (event->key()) {

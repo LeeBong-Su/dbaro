@@ -6,7 +6,7 @@ DB 연결은 직접 하지 않고 엔진 프로세스(`../engine`)에 맡긴다.
 | 폴더 | 역할 |
 |---|---|
 | `src/ui/` | 메인 창, SQL 에디터, 결과 그리드, 객체 탐색기, 연결 관리 화면, 테마(`Theme`), 아이콘(`Icons`) |
-| `src/core/` | 연결 정보 저장(`ConnectionStore`), 비밀번호 보안 저장(`SecretStore`), 방언별 문장 분리(`SqlSplitter`). 이후 자동완성, 메타데이터 캐시 |
+| `src/core/` | 연결 정보 저장(`ConnectionStore`), 비밀번호 보안 저장(`SecretStore`), 방언별 문장 분리(`SqlSplitter`), 식별자 따옴표 처리(`SqlIdentifiers`), 자동완성 문맥 분석(`SqlCompletion`), 열린 탭 저장(`WorkspaceStore`), SQL 파일 인코딩(`TextFile`), 실행 기록(`QueryHistory`), 바인드 변수(`SqlBinds`), 결과 내보내기(`ResultExport`), SQL 정렬(`SqlFormatter`) |
 | `src/ipc/` | 엔진 프로세스 실행과 통신 (`EngineClient`) |
 | `resources/icons/` | 자체 아이콘 (SVG, `#ICON` 색은 테마에 맞춰 바뀜). 이후 번역(한국어·영어) |
 | `tests/` | 단위 테스트 |
@@ -22,6 +22,21 @@ DB 연결은 직접 하지 않고 엔진 프로세스(`../engine`)에 맡긴다.
 | Esc | 세로 커서 끝내기 |
 | Tab / Shift+Tab | 들여쓰기 / 내어쓰기 (여러 줄 선택 시 줄 단위) |
 | Ctrl+/ | 줄 주석 켜기·끄기 |
+| Ctrl+E | 커서가 있는 문장의 예상 실행 계획 (실행하지 않음) |
+| F4 | 블록 선택한(또는 커서가 있는) 테이블·객체 이름의 DDL 스크립트 (코멘트, 인덱스, 트리거, 시노님, 권한 포함) |
+| Ctrl+Space | 자동완성 목록 열기 (입력 중에는 두 글자부터, 점 뒤에서는 바로 열림). Enter/Tab 넣기, Esc 닫기 |
+| Shift+마우스 휠 | 좌우 스크롤 (에디터, 결과 그리드, 탐색기) |
+| Ctrl+F / Ctrl+R (Ctrl+H) | 찾기 / 바꾸기 막대. Enter 다음, Shift+Enter 이전, Esc 닫기 |
+| F3 / Shift+F3 | 다음 / 이전 찾기 |
+| Ctrl+Shift+F | SQL 정렬 (선택 영역, 없으면 커서가 있는 문장) |
+| F8 (Ctrl+Alt+E) | 실행 기록: 검색해서 에디터에 다시 넣기 |
+| Ctrl+O / Ctrl+S / Ctrl+Shift+S | SQL 파일 열기 / 저장 / 다른 이름으로 저장 |
+
+`DESC 테이블`(DESCRIBE)은 Oracle·Tibero·PostgreSQL에서도 쓸 수 있다. 서버 SQL이 아니라 SQL*Plus·psql 명령이라 DBaro 엔진이 직접 컬럼 목록(이름, NOT NULL, 타입, 코멘트)을 만들어 결과 그리드에 보여 준다. 프로시저·함수·패키지는 인자 목록이 나온다. SQL*Plus처럼 `;` 없이 줄 끝에서 끝난다.
+
+- 열린 탭은 저절로 남는다. 앱을 닫았다 열면 SQL, 탭마다의 연결, 열어 둔 파일이 그대로 돌아오고, 저장하지 않은 파일 수정도 남아 있다.
+- 바인드 변수 `:name`, `?`(PostgreSQL 제외), SQL*Plus 치환 변수 `&name`·`&&name`(Oracle·Tibero)이 있으면 실행 전에 값을 묻는다. 지난번 값이 미리 채워지고, `&&`로 정한 값은 그 탭에서 다시 묻지 않는다.
+- 결과는 오른쪽 클릭 Export... (또는 Query → Export Results...)로 Excel(.xlsx), CSV, TSV, SQL INSERT, JSON, Markdown으로 내보낸다. 전체 행을 고르면 아직 안 가져온 행까지 가져온다.
 
 ## 빌드
 

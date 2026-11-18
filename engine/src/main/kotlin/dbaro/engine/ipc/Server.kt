@@ -6,10 +6,12 @@ import dbaro.engine.bool
 import dbaro.engine.daemonThreads
 import dbaro.engine.driver.DriverRegistry
 import dbaro.engine.exec.Connector
+import dbaro.engine.exec.Ddl
 import dbaro.engine.exec.ErrorInfo
 import dbaro.engine.exec.Session
 import dbaro.engine.int
 import dbaro.engine.string
+import dbaro.engine.stringOrNull
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.DataInputStream
@@ -88,6 +90,20 @@ class Server(input: InputStream, output: OutputStream, private val drivers: Driv
             "commit" -> withSession(id, params) { it.commit(); emptyMap() }
             "rollback" -> withSession(id, params) { it.rollback(); emptyMap() }
             "setAutoCommit" -> withSession(id, params) { it.setAutoCommit(params.bool("autoCommit", false)); emptyMap() }
+            "explain" -> withSession(id, params) { it.explain(params.string("sql")) }
+            "ddl" -> withSession(id, params) {
+                it.ddl(
+                    Ddl.Request(
+                        params.stringOrNull("schema")?.takeIf { s -> s.isNotEmpty() },
+                        params.string("name"),
+                        params.bool("schemaQuoted", false),
+                        params.bool("nameQuoted", false),
+                    ),
+                )
+            }
+            "metaSchemas" -> withSession(id, params) { it.schemas() }
+            "metaObjects" -> withSession(id, params) { it.objects(params.string("schema")) }
+            "metaColumns" -> withSession(id, params) { it.columns(params.string("schema"), params.string("table")) }
             else -> replyError(id, ErrorInfo.of("Unknown method: $method"))
         }
     }

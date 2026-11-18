@@ -158,8 +158,28 @@ QScrollBar::handle:horizontal { min-width: 24px; margin: 2px; }
 QScrollBar::add-line, QScrollBar::sub-line { width: 0px; height: 0px; }
 QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
 
+QTableView#resultGrid::item { padding: 0px 10px; }
+QTableView#resultGrid QHeaderView::section { background: @panel@; color: @text@; border: none; border-right: 1px solid @border@; border-bottom: 1px solid @border@; padding: 0px 10px 0px 13px; }
+QTableView#resultGrid QHeaderView::section:vertical { color: @textDim@; padding: 0px 6px; }
+QTableView#resultGrid QTableCornerButton::section { background: @panel@; border: none; border-right: 1px solid @border@; border-bottom: 1px solid @border@; }
+
+QListView#completionPopup { background: @popup@; color: @text@; border: 1px solid @border@; padding: 2px; outline: 0; }
+QListView#completionPopup::item { padding: 2px 6px; border-radius: 3px; }
+QListView#completionPopup::item:selected { background: @selection@; color: @selectionText@; }
+
 QTreeView#explorerTree { background: @panel@; }
 QLineEdit#explorerFilter { background: @editor@; border: 1px solid @border@; border-radius: 4px; padding: 3px 6px; }
+
+QWidget#findBar { background: @panel@; border-bottom: 1px solid @border@; }
+QWidget#findBar QLineEdit { background: @editor@; border: 1px solid @border@; border-radius: 4px; padding: 2px 6px; }
+QWidget#findBar QLineEdit:focus { border: 1px solid @accent@; }
+QWidget#findBar QLineEdit[invalid="true"] { border: 1px solid #c75450; }
+QWidget#findBar QToolButton { padding: 2px 5px; border-radius: 3px; }
+QWidget#findBar QToolButton:checked { background: @selection@; color: @selectionText@; }
+QLabel#findStatus { color: @textDim@; }
+QLabel#findStatus[error="true"] { color: #e06c6c; }
+
+QTableView#historyList { background: @editor@; }
 )");
 
     const QList<QPair<QString, QColor>> tokens{
@@ -218,4 +238,14 @@ void Theme::apply(Kind kind)
 QColor Theme::iconColor()
 {
     return colorsFor(g_current).icon;
+}
+
+QColor Theme::searchMatchColor()
+{
+    return g_current == Kind::Dark ? QColor(0x4b, 0x43, 0x26) : QColor(0xff, 0xf1, 0xa8);
+}
+
+QColor Theme::currentMatchColor()
+{
+    return g_current == Kind::Dark ? QColor(0x8a, 0x6a, 0x14) : QColor(0xff, 0xc4, 0x3d);
 }

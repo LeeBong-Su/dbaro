@@ -1,11 +1,15 @@
 #include "QueryTab.h"
 
+#include "ConnectionBar.h"
+#include "FindBar.h"
+#include "MetadataService.h"
+#include "SqlCompleter.h"
 #include "QuerySession.h"
 #include "ResultPanel.h"
 #include "SqlEditor.h"
 
-#include <QColor>
 #include <QFrame>
+#include <QRegularExpression>
 #include <QSplitter>
 #include <QTextBlock>
 #include <QTextCursor>
@@ -14,19 +18,26 @@
 QueryTab::QueryTab(EngineClient *engine, QWidget *parent)
     : QWidget(parent)
 {
-    m_colorStrip = new QFrame(this);
-    m_colorStrip->setFixedHeight(3);
-    m_colorStrip->hide();
+    m_connectionBar = new ConnectionBar(this);
 
     m_editor = new SqlEditor(this);
     m_editor->setObjectName(QStringLiteral("sqlEditor"));
     m_editor->setFrameShape(QFrame::NoFrame);
-    m_editor->setPlaceholderText(tr("Write SQL here. Ctrl+Enter runs the current statement, F5 runs the script."));
+    m_editor->setPlaceholderText(tr("Write SQL here. Ctrl+Enter runs the current statement, F5 runs the script, Ctrl+E shows its plan."));
 
     m_results = new ResultPanel(this);
 
+    // 찾기 막대는 에디터 바로 위에 붙는다 (Ctrl+F로 열 때만 보인다).
+    auto *editorPane = new QWidget(this);
+    m_findBar = new FindBar(m_editor, editorPane);
+    auto *editorLayout = new QVBoxLayout(editorPane);
+    editorLayout->setContentsMargins(0, 0, 0, 0);
+    editorLayout->setSpacing(0);
+    editorLayout->addWidget(m_findBar);
+    editorLayout->addWidget(m_editor);
+
     m_splitter = new QSplitter(Qt::Vertical, this);
-    m_splitter->addWidget(m_editor);
+    m_splitter->addWidget(editorPane);
     m_splitter->addWidget(m_results);
     m_splitter->setStretchFactor(0, 3);
     m_splitter->setStretchFactor(1, 2);
@@ -36,7 +47,7 @@ QueryTab::QueryTab(EngineClient *engine, QWidget *parent)
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
-    layout->addWidget(m_colorStrip);
+    layout->addWidget(m_connectionBar);
     layout->addWidget(m_splitter);
 
     connect(m_editor, &SqlEditor::cursorPositionChanged, this, [this] {
@@ -52,30 +63,131 @@ QueryTab::QueryTab(EngineClient *engine, QWidget *parent)
     connect(m_session, &QuerySession::rowsReceived, m_results, &ResultPanel::appendRows);
     connect(m_session, &QuerySession::statementFailed, this, &QueryTab::showError);
     connect(m_results, &ResultPanel::moreRowsRequested, m_session, [this] { m_session->fetchMore(); });
+    connect(m_results, &ResultPanel::fetchAllRequested, m_session, [this] { m_session->fetchMore(5000); });
+    connect(m_session, &QuerySession::statementFinished, this, [this](const SqlStatement &statement, bool ok) {
+        // 내보내기(SQL INSERT)에서 테이블 이름을 짐작할 수 있게 결과를 만든 문장을 알려 준다.
+        if (ok && m_session->executionInfo().kind == ExecutionInfo::Kind::ResultSet)
+            m_results->setResultSql(statement.originalText());
+    });
+    connect(m_session, &QuerySession::stateChanged, this, &QueryTab::updateConnectionBar);
+    connect(m_session, &QuerySession::executionInfoChanged, m_results, &ResultPanel::showExecutionInfo);
+    connect(m_session, &QuerySession::executionInfoChanged, this, [this](const ExecutionInfo &info) {
+        // SELECT가 아닌 문장(DML, DDL, USE 등)은 결과 표가 없으니 실행 로그를 보여 준다.
+        // 스크립트는 문장마다 바뀌므로 마지막 문장 기준이 된다 (SELECT면 결과 탭).
+        if (info.kind == ExecutionInfo::Kind::Update || info.kind == ExecutionInfo::Kind::Other)
+            m_results->showLog();
+    });
+    connect(m_session, &QuerySession::planReceived, m_results, &ResultPanel::showPlan);
+    connect(m_session, &QuerySession::statementSucceeded, this, &QueryTab::onStatementSucceeded);
+}
+
+QString QueryTab::useTarget(const QString &sql)
+{
+    static const QRegularExpression use(QStringLiteral("^\\s*USE\\s+(?:`((?:[^`]|``)+)`|([A-Za-z0-9_$]+))\\s*;?\\s*$"),
+                                        QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpressionMatch match = use.match(sql);
+    if (!match.hasMatch())
+        return {};
+    return match.captured(1).isEmpty() ? match.captured(2) : match.captured(1).replace(QStringLiteral("``"), QStringLiteral("`"));
+}
+
+void QueryTab::setConnectionId(const QString &id)
+{
+    m_connectionId = id;
+    m_editor->completer()->setConnection(m_metadata, id);
+}
+
+void QueryTab::setFile(const QString &path, const TextFileFormat &format)
+{
+    m_filePath = path;
+    m_fileFormat = format;
+}
+
+bool QueryTab::hasUnsavedFile() const
+{
+    return !m_filePath.isEmpty() && m_editor->document()->isModified();
+}
+
+void QueryTab::setMetadataService(MetadataService *metadata)
+{
+    m_metadata = metadata;
+    m_editor->completer()->setConnection(metadata, m_connectionId);
+}
+
+void QueryTab::onStatementSucceeded(const SqlStatement &statement)
+{
+    // 객체를 만들거나 바꾸면 자동완성용 메타데이터를 다시 읽게 한다.
+    static const QRegularExpression ddl(QStringLiteral("^\\s*(CREATE|ALTER|DROP|RENAME|TRUNCATE|COMMENT)\\b"),
+                                        QRegularExpression::CaseInsensitiveOption);
+    if (m_metadata && !m_connectionId.isEmpty() && ddl.match(statement.text).hasMatch())
+        m_metadata->invalidate(m_connectionId);
+
+    if (m_dialect != SqlDialect::MySql)
+        return;
+    const QString schema = useTarget(statement.text);
+    if (!schema.isEmpty())
+        setCurrentSchema(schema);
+}
+
+void QueryTab::setCurrentSchema(const QString &schema)
+{
+    if (m_currentSchema == schema)
+        return;
+    m_currentSchema = schema;
+    m_connectionBar->setSchema(schema);
+    m_editor->completer()->setCurrentSchema(schema);
 }
 
 void QueryTab::setDialect(SqlDialect dialect)
 {
+    m_dialect = dialect;
     m_editor->setDialect(dialect);
+    m_results->setDialect(dialect);
 }
 
-void QueryTab::setConnectionColor(const QColor &color)
+void QueryTab::setConnectionProfile(const ConnectionProfile *profile)
 {
-    if (!color.isValid()) {
-        m_colorStrip->hide();
-        return;
-    }
-    m_colorStrip->setStyleSheet(QStringLiteral("background-color: %1;").arg(color.name()));
-    m_colorStrip->show();
+    m_connectionBar->setProfile(profile);
+    updateConnectionBar();
+}
+
+QueryTab::~QueryTab()
+{
+    // 세션을 먼저 정리한다. 세션은 연결을 끊으며 신호를 보내는데, 자식 위젯(연결 막대 등)이
+    // 먼저 지워진 뒤에 그 신호가 이 탭에 오면 이미 없는 위젯을 건드리게 된다.
+    disconnect(m_session, nullptr, this, nullptr);
+    delete m_session;
+    m_session = nullptr;
+}
+
+void QueryTab::updateConnectionBar()
+{
+    m_results->setRunning(m_session->isBusy());
+    if (!m_session->isConnected())
+        setCurrentSchema({}); // 다시 접속하면 접속 설정의 기본 데이터베이스로 돌아간다
+    else
+        m_editor->completer()->retryMetadata(); // 이제 비밀번호를 알고 있으니 메타데이터를 가져올 수 있다
+    ConnectionBar::State state = ConnectionBar::State::NotConnected;
+    if (m_session->isConnecting())
+        state = ConnectionBar::State::Connecting;
+    else if (m_session->isConnected())
+        state = m_session->isBusy() ? ConnectionBar::State::Running : ConnectionBar::State::Connected;
+    m_connectionBar->setState(state, m_session->hasPendingTransaction(), m_session->serverInfo());
 }
 
 void QueryTab::showError(const SqlStatement &statement, const EngineError &error)
 {
+    // 에디터에 없는 문장(탐색기에서 보낸 USE 등)이면 로그만 보여 준다.
+    if (statement.start < 0) {
+        m_results->showLog();
+        return;
+    }
     // 오류 위치(없으면 문장 시작)로 커서를 옮기고 그 단어를 선택한다.
     QTextDocument *document = m_editor->document();
     int position = statement.start;
     if (error.position >= 0) {
-        position = statement.start + error.position;
+        // 바인드 변수에 값을 넣었으면 오류 위치를 넣기 전 글(에디터) 기준으로 되돌린다.
+        position = statement.start + statement.sourcePosition(error.position);
     } else if (error.line >= 1) {
         const QTextBlock first = document->findBlock(statement.start);
         const QTextBlock target = document->findBlockByNumber(first.blockNumber() + error.line - 1);

@@ -17,25 +17,55 @@ qt_add_library(dbaro_lib STATIC
     src/core/ConnectionProfile.h
     src/core/ConnectionStore.cpp
     src/core/ConnectionStore.h
+    src/core/QueryHistory.cpp
+    src/core/QueryHistory.h
+    src/core/ResultExport.cpp
+    src/core/ResultExport.h
     src/core/SecretStore.cpp
     src/core/SecretStore.h
+    src/core/SqlBinds.cpp
+    src/core/SqlBinds.h
+    src/core/SqlCompletion.cpp
+    src/core/SqlCompletion.h
     src/core/SqlDialect.h
+    src/core/SqlFormatter.cpp
+    src/core/SqlFormatter.h
+    src/core/SqlIdentifiers.cpp
+    src/core/SqlIdentifiers.h
     src/core/SqlSafety.cpp
     src/core/SqlSafety.h
     src/core/SqlSplitter.cpp
     src/core/SqlSplitter.h
+    src/core/TextFile.cpp
+    src/core/TextFile.h
+    src/core/WorkspaceStore.cpp
+    src/core/WorkspaceStore.h
     src/ipc/EngineClient.cpp
     src/ipc/EngineClient.h
+    src/ui/BindDialog.cpp
+    src/ui/BindDialog.h
+    src/ui/ConnectionBar.cpp
+    src/ui/ConnectionBar.h
     src/ui/ConnectionDialog.cpp
     src/ui/ConnectionDialog.h
     src/ui/EditorTabs.cpp
     src/ui/EditorTabs.h
+    src/ui/ExportDialog.cpp
+    src/ui/ExportDialog.h
+    src/ui/FindBar.cpp
+    src/ui/FindBar.h
+    src/ui/HistoryDialog.cpp
+    src/ui/HistoryDialog.h
     src/ui/Icons.cpp
     src/ui/Icons.h
     src/ui/MainWindow.cpp
     src/ui/MainWindow.h
+    src/ui/MetadataService.cpp
+    src/ui/MetadataService.h
     src/ui/ObjectExplorer.cpp
     src/ui/ObjectExplorer.h
+    src/ui/PlanView.cpp
+    src/ui/PlanView.h
     src/ui/QuerySession.cpp
     src/ui/QuerySession.h
     src/ui/QueryTab.cpp
@@ -44,6 +74,10 @@ qt_add_library(dbaro_lib STATIC
     src/ui/ResultModel.h
     src/ui/ResultPanel.cpp
     src/ui/ResultPanel.h
+    src/ui/ScrollHelpers.cpp
+    src/ui/ScrollHelpers.h
+    src/ui/SqlCompleter.cpp
+    src/ui/SqlCompleter.h
     src/ui/SqlEditor.cpp
     src/ui/SqlEditor.h
     src/ui/SqlHighlighter.cpp
@@ -60,15 +94,24 @@ qt_add_resources(dbaro_lib "icons"
     FILES
         resources/icons/add.svg
         resources/icons/close.svg
+        resources/icons/column.svg
         resources/icons/commit.svg
         resources/icons/database-add.svg
         resources/icons/database.svg
         resources/icons/dbaro.svg
+        resources/icons/explain.svg
+        resources/icons/folder.svg
         resources/icons/hide.svg
+        resources/icons/key.svg
+        resources/icons/object.svg
         resources/icons/rollback.svg
+        resources/icons/routine.svg
         resources/icons/run-script.svg
         resources/icons/run.svg
+        resources/icons/schema.svg
         resources/icons/stop.svg
+        resources/icons/table.svg
+        resources/icons/view.svg
 )
 
 target_include_directories(dbaro_lib PUBLIC src)

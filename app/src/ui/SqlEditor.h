@@ -11,6 +11,7 @@
 #include <functional>
 
 class QTimer;
+class SqlCompleter;
 class SqlHighlighter;
 
 // SQL 에디터. QPlainTextEdit 위에 다음을 더한다.
@@ -19,6 +20,7 @@ class SqlHighlighter;
 // - 세로 커서(블록 선택): Alt+드래그, Alt+Shift+방향키, Ctrl+Alt+위/아래
 //   여러 줄에 동시에 입력·삭제·붙여넣기. 한글처럼 조합해서 입력하는 글자도 모든 커서에 들어간다.
 // - Tab/Shift+Tab 들여쓰기, Ctrl+/ 줄 주석, Enter 시 들여쓰기 유지
+// - 자동완성 (SqlCompleter): 입력 중 또는 Ctrl+Space
 class SqlEditor : public QPlainTextEdit
 {
     Q_OBJECT
@@ -33,9 +35,17 @@ public:
     QList<SqlStatement> statementsToExecute(bool wholeScript);
     QList<SqlStatement> statements();
 
+    SqlCompleter *completer() const { return m_completer; }
+
+    // 선택한 글자 (한 줄). 선택이 없으면 커서가 있는 이름 (schema.name, 따옴표 포함)
+    QString objectNameAtCursor() const;
+
     // 세로 커서 수 (일반 상태면 1)
     int cursorCount() const { return m_cursors.size() > 1 ? m_cursors.size() : 1; }
     bool hasExtraCursors() const { return m_cursors.size() > 1; }
+
+    // 찾기 막대가 찾은 곳 (모두 옅게, current번째는 진하게 칠한다). 빈 목록이면 지운다.
+    void setSearchMatches(const QList<QTextCursor> &matches, int current = -1);
 
     int lineNumberAreaWidth() const;
     void paintLineNumberArea(QPaintEvent *event);
@@ -51,6 +61,7 @@ protected:
     void changeEvent(QEvent *event) override;
 
 private:
+    void processKey(QKeyEvent *event);
     // 줄 번호 영역과 강조
     void updateLineNumberAreaWidth();
     void updateLineNumberArea(const QRect &rect, int dy);
@@ -88,8 +99,12 @@ private:
 
     QTimer *m_parseTimer = nullptr;
     QList<SqlStatement> m_statements;
+    SqlCompleter *m_completer = nullptr;
     bool m_statementsDirty = true;
     int m_currentStatement = -1;
+
+    QList<QTextCursor> m_searchMatches;
+    int m_currentSearchMatch = -1;
 
     QList<QTextCursor> m_cursors; // 세로 커서 (2개 이상일 때만 사용)
     int m_primaryIndex = 0;       // m_cursors 중 주 커서 (깜빡이는 커서, 한글 조합 위치)

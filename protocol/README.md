@@ -33,11 +33,16 @@ CBOR는 JSON처럼 다루기 쉬운 바이너리 형식이다. Qt에 기본으�
 | `connect` | 연결 설정 | `sessionId`, 제품·드라이버 정보, `autoCommit` |
 | `disconnect` | `sessionId` | |
 | `execute` | `sessionId`, `sql`, `pageSize`(기본 500), `queryTimeoutSec` | 아래 실행 결과 |
-| `fetch` | `sessionId`, `cursorId`, `count` | `rows`, `hasMore` |
+| `fetch` | `sessionId`, `cursorId`, `count` | `rows`, `hasMore`, `elapsedMs`(이번 페이지를 읽은 시간) |
+| `explain` | `sessionId`, `sql` | 예상 실행 계획 (문장은 실행하지 않음). 아래 실행 계획 |
+| `ddl` | `sessionId`, `schema`(없으면 현재 스키마), `name`, `schemaQuoted`, `nameQuoted` | `schema`, `name`, `type`, `script`. 아래 DDL |
 | `closeCursor` | `sessionId`, `cursorId` | |
 | `cancel` | `sessionId` | 실행 중인 문장을 바로 취소 (다른 요청을 기다리지 않음) |
 | `commit` / `rollback` | `sessionId` | |
 | `setAutoCommit` | `sessionId`, `autoCommit` | |
+| `metaSchemas` | `sessionId` | `names`(정렬된 스키마 이름, MySQL·MariaDB는 데이터베이스), `current`(지금 접속한 스키마) |
+| `metaObjects` | `sessionId`, `schema` | `objects`: `name`, `type`(드라이버가 주는 TABLE, VIEW, ... 와 FUNCTION, PROCEDURE), `remarks` / `truncated`(2만 개 초과) |
+| `metaColumns` | `sessionId`, `schema`, `table` | `columns`: `name`, `type`(예: `VARCHAR2(40)`, `NUMBER(10,2)`), `nullable`, `primaryKey`, `default`, `remarks` |
 
 연결 설정: `type`(oracle, tibero, mariadb, mysql, postgres), `url`, `user`, `password`, `driverPath`?, `driverClass`?, `autoCommit`, `readOnly`, `connectTimeoutSec`, `initSql`(문장 배열).
 
@@ -45,7 +50,27 @@ CBOR는 JSON처럼 다루기 쉬운 바이너리 형식이다. Qt에 기본으�
 
 - 결과 집합: `kind: "resultSet"`, `columns: [{name, typeName, numeric}]`, `rows: [[값...]]`, `hasMore`, `cursorId`(남은 행이 있을 때)
 - 그 밖: `kind: "update"`, `updateCount`
-- 공통: `elapsedMs`, `warnings`(SQLWarning, PostgreSQL NOTICE 등), `output`(Oracle·Tibero의 DBMS_OUTPUT)
+- 공통: `elapsedMs`(전체), `executeMs`(문장 실행까지. 나머지는 첫 페이지를 읽은 시간), `warnings`(SQLWarning, PostgreSQL NOTICE 등), `output`(Oracle·Tibero의 DBMS_OUTPUT)
+
+DESC (`execute`의 `sql`이 `DESC[RIBE] [schema.]object`일 때): SQL*Plus·psql의 클라이언트 명령이라 Oracle·Tibero·PostgreSQL 서버는 모른다. 엔진이 서버로 보내지 않고 딕셔너리를 조회해 결과 집합(`hasMore: false`, 커서 없음)으로 돌려준다. MySQL·MariaDB의 DESC는 서버 SQL이라 그대로 보낸다.
+
+- Oracle·Tibero: 테이블·뷰·구체화 뷰는 `Name`, `Null?`, `Type`(SQL*Plus 표기, 예: `VARCHAR2(20 CHAR)`, `NUMBER(9,2)`), `Comment` (`ALL_TAB_COLUMNS`, `ALL_COL_COMMENTS`). 프로시저·함수는 `Argument`, `Type`, `In/Out`(반환값은 `RETURN`), `Default?`, 패키지는 앞에 `Subprogram`, `Overload`를 붙인다 (`ALL_ARGUMENTS`). 객체 타입은 속성(`ALL_TYPE_ATTRS`), 컬렉션 타입은 요소 타입(`ALL_COLL_TYPES`). 스키마가 없으면 현재 스키마 → 자기 시노님 → PUBLIC 시노님 순서로 찾고 시노님은 끝까지 따라간다 (DB 링크 시노님은 지원하지 않음)
+- PostgreSQL: 테이블·뷰·구체화 뷰·외부 테이블·복합 타입은 `Name`, `Null?`, `Type`(`format_type`), `Default`(IDENTITY, 생성 컬럼 포함), `Comment`. 없으면 함수·프로시저를 오버로드마다 `Function`, `Arguments`, `Returns`, `Kind`로. 스키마가 없으면 search_path에서 보이는 객체 (psql `\d`와 같음). 트랜잭션 중이면 세이브포인트 안에서 조회해 실패해도 트랜잭션이 막히지 않는다
+- 딕셔너리 컬럼은 DB 버전마다 달라서 있는 컬럼만 골라 조회한다
+
+DDL (`ddl`): 객체 본문에 코멘트, 인덱스, 트리거, 그 객체를 가리키는 시노님, 권한 부여를 구역별 주석과 함께 붙인다. 따옴표로 감싸지 않은 이름은 DB 규칙에 맞춘다(Oracle 대문자, PostgreSQL 소문자, MySQL은 대소문자 무시).
+
+- Oracle·Tibero: `DBMS_METADATA.GET_DDL`과 `GET_DEPENDENT_DDL`(COMMENT, INDEX, TRIGGER, OBJECT_GRANT), 시노님은 `ALL_SYNONYMS`에서 만든다. 권한이 없거나 지원하지 않으면 `ALL_TAB_COLUMNS`(JDBC), `ALL_VIEWS`, `ALL_SOURCE`, `ALL_TAB_COMMENTS`, `ALL_COL_COMMENTS`, `ALL_TAB_PRIVS`로 직접 만든다. 이름이 객체가 아니면 시노님(자기 스키마 → PUBLIC)으로 보고 가리키는 객체를 보여 준다
+- MySQL·MariaDB: `SHOW CREATE TABLE/VIEW/PROCEDURE/FUNCTION/TRIGGER`(루틴·트리거는 `DELIMITER $$`로 감쌈), `information_schema.TABLE_PRIVILEGES`
+- PostgreSQL: 카탈로그로 직접 만든다 (컬럼·기본값·IDENTITY, 제약 조건, 인덱스, 소유자, 코멘트, 권한, 트리거, 뷰·구체화 뷰·시퀀스·함수)
+- 그 밖: JDBC 메타데이터 (컬럼, 기본 키, 인덱스, 코멘트, 권한, INFORMATION_SCHEMA.SYNONYMS)
+
+실행 계획 (`explain`):
+
+- `columns`: 표 머리글, `nodes: [{id, parent, cells}]`(`parent`가 -1이면 맨 위), `text`(DB 고유 형식의 계획 글, 없을 수 있음), `elapsedMs`
+- Oracle·Tibero: `EXPLAIN PLAN SET STATEMENT_ID = ... FOR`로 PLAN_TABLE에 넣고 읽은 뒤 지운다. Oracle은 `DBMS_XPLAN.DISPLAY` 글도 함께
+- PostgreSQL: `EXPLAIN (FORMAT JSON)`을 트리로, 기본 `EXPLAIN` 글도 함께
+- MySQL·MariaDB와 그 밖: `EXPLAIN` 결과 표 그대로 (MySQL 8은 `EXPLAIN FORMAT=TREE` 글도 함께). 결과가 한 컬럼뿐이면 글로 준다
 
 값: 정수 → 정수, 실수 → double, 불리언, NULL, NUMERIC/DECIMAL → 문자열(정밀도 유지), 날짜·시간 → `yyyy-MM-dd HH:mm:ss[.f]` 문자열, 바이너리 → 바이트열(최대 64KB), 긴 문자열·CLOB → 최대 64K 글자.
 

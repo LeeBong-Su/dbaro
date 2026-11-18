@@ -221,6 +221,102 @@ class ServerTest {
     }
 
     @Test
+    fun readsMetadata() {
+        val session = connect()
+        execute(session, "CREATE TABLE emp_2 (id INT PRIMARY KEY, name VARCHAR(30) NOT NULL, salary DECIMAL(10,2) DEFAULT 0)")
+        execute(session, "COMMENT ON TABLE emp_2 IS '사원'")
+        execute(session, "COMMENT ON COLUMN emp_2.name IS '이름'")
+        execute(session, "CREATE VIEW emp_view AS SELECT id, name FROM emp_2")
+
+        val schemas = call("metaSchemas", mapOf("sessionId" to session))
+        assertTrue((schemas["names"] as List<*>).contains("PUBLIC"))
+        assertEquals("PUBLIC", schemas["current"])
+
+        @Suppress("UNCHECKED_CAST")
+        val objects = call("metaObjects", mapOf("sessionId" to session, "schema" to "PUBLIC"))["objects"] as List<Map<String, Any?>>
+        val table = objects.single { it["name"] == "EMP_2" }
+        assertTrue((table["type"] as String).contains("TABLE"))
+        assertEquals("사원", table["remarks"])
+        assertTrue((objects.single { it["name"] == "EMP_VIEW" }["type"] as String).contains("VIEW"))
+
+        @Suppress("UNCHECKED_CAST")
+        val columns = call("metaColumns", mapOf("sessionId" to session, "schema" to "PUBLIC", "table" to "EMP_2"))["columns"] as List<Map<String, Any?>>
+        assertEquals(listOf("ID", "NAME", "SALARY"), columns.map { it["name"] })
+        assertEquals(true, columns[0]["primaryKey"])
+        assertEquals(false, columns[1]["nullable"])
+        assertEquals("이름", columns[1]["remarks"])
+        assertTrue((columns[1]["type"] as String).endsWith("(30)"), "type: ${columns[1]["type"]}")
+        assertTrue((columns[2]["type"] as String).endsWith("(10,2)"), "type: ${columns[2]["type"]}")
+    }
+
+    @Test
+    fun reportsExecuteAndFetchTimes() {
+        val session = connect()
+        val first = execute(session, "SELECT X FROM SYSTEM_RANGE(1, 30)", pageSize = 10)
+        val executeMs = first["executeMs"] as Number
+        val elapsedMs = first["elapsedMs"] as Number
+        assertTrue(executeMs.toLong() in 0..elapsedMs.toLong(), "execute $executeMs ms, total $elapsedMs ms")
+        val next = call("fetch", mapOf("sessionId" to session, "cursorId" to first["cursorId"], "count" to 10))
+        assertNotNull(next["elapsedMs"])
+    }
+
+    @Test
+    fun explainsWithoutExecuting() {
+        val session = connect()
+        execute(session, "CREATE TABLE plan_t (id INT PRIMARY KEY, name VARCHAR(20))")
+        val plan = call("explain", mapOf("sessionId" to session, "sql" to "DELETE FROM plan_t WHERE id = 1"))
+        assertTrue((plan["text"] as String).contains("PLAN_T", ignoreCase = true), "plan: ${plan["text"]}")
+        assertNotNull(plan["elapsedMs"])
+        // 계획만 보았으므로 아무것도 지워지지 않는다 (애초에 행도 없지만 오류도 없다)
+        execute(session, "INSERT INTO plan_t VALUES (1, 'a')")
+        call("explain", mapOf("sessionId" to session, "sql" to "DELETE FROM plan_t"))
+        assertEquals(1L, ((execute(session, "SELECT COUNT(*) FROM plan_t")["rows"] as List<*>).single() as List<*>)[0])
+    }
+
+    @Test
+    fun generatesDdlWithCommentsIndexesSynonymsAndGrants() {
+        val session = connect()
+        execute(session, "CREATE TABLE emp_ddl (id INT PRIMARY KEY, name VARCHAR(30) NOT NULL, salary DECIMAL(10,2) DEFAULT 0)")
+        execute(session, "COMMENT ON TABLE emp_ddl IS '사원'")
+        execute(session, "COMMENT ON COLUMN emp_ddl.name IS '이름'")
+        execute(session, "CREATE INDEX emp_ddl_name_ix ON emp_ddl (name)")
+        execute(session, "CREATE USER reporter PASSWORD 'x'")
+        execute(session, "GRANT SELECT, UPDATE ON emp_ddl TO reporter")
+        execute(session, "CREATE SYNONYM emp_syn FOR emp_ddl")
+        execute(session, "CREATE VIEW emp_ddl_v AS SELECT id, name FROM emp_ddl")
+
+        val table = call("ddl", mapOf("sessionId" to session, "name" to "emp_ddl"))
+        val script = table["script"] as String
+        assertEquals("EMP_DDL", table["name"])
+        for (expected in listOf(
+            "CREATE TABLE \"PUBLIC\".\"EMP_DDL\" (",
+            "\"NAME\" CHARACTER VARYING(30) NOT NULL",
+            "(10,2) DEFAULT 0",
+            "PRIMARY KEY (\"ID\")",
+            "-- Comments",
+            "COMMENT ON TABLE \"PUBLIC\".\"EMP_DDL\" IS '사원';",
+            "COMMENT ON COLUMN \"PUBLIC\".\"EMP_DDL\".\"NAME\" IS '이름';",
+            "-- Indexes",
+            "CREATE INDEX \"PUBLIC\".\"EMP_DDL_NAME_IX\" ON \"PUBLIC\".\"EMP_DDL\" (\"NAME\");",
+            "-- Synonyms",
+            "SYNONYM \"PUBLIC\".\"EMP_SYN\" FOR \"PUBLIC\".\"EMP_DDL\";",
+            "-- Grants",
+            "ON \"PUBLIC\".\"EMP_DDL\" TO \"REPORTER\";",
+        )) {
+            assertTrue(script.contains(expected), "missing <$expected> in:\n$script")
+        }
+        assertTrue(Regex("GRANT (SELECT, UPDATE|UPDATE, SELECT) ON").containsMatchIn(script), script)
+
+        // 스키마로 한정한 이름, 뷰
+        val view = call("ddl", mapOf("sessionId" to session, "schema" to "public", "name" to "Emp_Ddl_V"))
+        assertEquals("VIEW", view["type"])
+        assertTrue((view["script"] as String).contains("CREATE VIEW \"PUBLIC\".\"EMP_DDL_V\" AS"), view["script"].toString())
+
+        val missing = callError("ddl", mapOf("sessionId" to session, "name" to "no_such_object"))
+        assertTrue((missing["message"] as String).contains("Object not found"), missing.toString())
+    }
+
+    @Test
     fun explainsMissingTiberoDriver() {
         val error = callError("test", mapOf("type" to "tibero", "url" to "jdbc:tibero:thin:@localhost:8629:tibero"))
         assertTrue((error["message"] as String).contains("Tibero JDBC driver"))

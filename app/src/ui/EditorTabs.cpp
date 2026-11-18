@@ -80,7 +80,11 @@ void EditorTabBar::updateCloseButtons()
 EditorTabs::EditorTabs(QWidget *parent)
     : QTabWidget(parent)
 {
-    setTabBar(new EditorTabBar(this));
+    auto *bar = new EditorTabBar(this);
+    setTabBar(bar);
     setDocumentMode(true);
     setMovable(true);
+    // QTabWidget는 tabsClosable일 때만 탭 막대의 닫기 요청을 넘겨준다.
+    // 닫기 버튼을 직접 만들었으므로(tabsClosable 꺼짐) 닫기 요청을 직접 연결한다.
+    connect(bar, &QTabBar::tabCloseRequested, this, &QTabWidget::tabCloseRequested);
 }

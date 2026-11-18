@@ -11,6 +11,13 @@ class ResultModel : public QAbstractTableModel
     Q_OBJECT
 
 public:
+    struct Column
+    {
+        QString name;
+        QString typeName;
+        bool numeric = false;
+    };
+
     explicit ResultModel(QObject *parent = nullptr);
 
     void reset(const QCborArray &columns);
@@ -28,18 +35,13 @@ public:
     QString copyText(int row, int column) const;
     QString columnName(int column) const;
     bool hasMore() const { return m_hasMore; }
+    const QList<Column> &columns() const { return m_columns; }
+    const QList<QCborArray> &rows() const { return m_rows; }
 
 signals:
     void moreRowsRequested();
 
 private:
-    struct Column
-    {
-        QString name;
-        QString typeName;
-        bool numeric = false;
-    };
-
     QList<Column> m_columns;
     QList<QCborArray> m_rows;
     bool m_hasMore = false;

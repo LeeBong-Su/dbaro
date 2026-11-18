@@ -14,5 +14,7 @@ void save(Kind kind);
 void apply(Kind kind);
 
 QColor iconColor(); // 단색 아이콘을 칠할 색 (현재 테마 기준)
+QColor searchMatchColor();  // 에디터에서 찾은 글자 바탕
+QColor currentMatchColor(); // 찾은 것 중 지금 고른 것의 바탕
 
 } // namespace Theme

@@ -20,6 +20,35 @@ QCborMap params(std::initializer_list<std::pair<QString, QCborValue>> items)
     return map;
 }
 
+// 실행 로그에 남길 문장: "[1/2] SQL> SELECT ..." 이어지는 줄은 첫 줄의 SQL 위치에 맞춘다.
+// 아주 긴 문장(큰 INSERT 스크립트 등)은 앞부분만 남긴다.
+QString statementForLog(const QString &head, const QString &sql)
+{
+    constexpr int maxLines = 200;
+    constexpr int maxChars = 20000;
+    QString text = sql.trimmed();
+    text.remove(u'\r');
+    QStringList lines = text.split(u'\n');
+    const qsizetype total = lines.size();
+    if (total > maxLines)
+        lines.resize(maxLines);
+    for (QString &line : lines) {
+        while (!line.isEmpty() && line.back().isSpace())
+            line.chop(1);
+    }
+    QString body = lines.join(u'\n' + QString(head.size(), u' '));
+    QString note;
+    if (body.size() > maxChars) {
+        body.truncate(maxChars);
+        note = QuerySession::tr("(statement shortened: %n characters shown)", nullptr, maxChars);
+    } else if (total > maxLines) {
+        note = QuerySession::tr("(%n more line(s) not shown)", nullptr, int(total - maxLines));
+    }
+    if (!note.isEmpty())
+        body += u'\n' + QString(head.size(), u' ') + note;
+    return head + body;
+}
+
 } // namespace
 
 QuerySession::QuerySession(EngineClient *engine, QObject *parent)
@@ -116,6 +145,8 @@ void QuerySession::runNext()
     }
 
     const SqlStatement statement = m_queue.takeFirst();
+    // 실행하는 문장을 먼저 로그에 남긴다 (오래 걸리는 문장도 무엇이 실행 중인지 보인다).
+    emit message(statementForLog(QStringLiteral("[%1/%2] SQL> ").arg(m_done + 1).arg(m_total), statement.text), false);
     QPointer<QuerySession> self(this);
     m_engine->request(QStringLiteral("execute"),
                       params({{QStringLiteral("sessionId"), m_sessionId},
@@ -133,6 +164,7 @@ void QuerySession::onExecuted(const SqlStatement &statement, const QCborMap &res
     ++m_done;
     if (error.isError()) {
         emit message(tr("%1 Error: %2").arg(progress(), error.message), true);
+        emit statementFinished(statement, false, 0, -1, error.message);
         emit statementFailed(statement, error);
         m_queue.clear(); // 스크립트는 오류가 난 곳에서 멈춘다
         finishRun();
@@ -145,6 +177,10 @@ void QuerySession::onExecuted(const SqlStatement &statement, const QCborMap &res
         emit serverOutput(output);
 
     const qint64 elapsed = result.value(QStringLiteral("elapsedMs")).toInteger();
+    const qint64 executeMs = result.value(QStringLiteral("executeMs")).toInteger(elapsed);
+    m_info = {};
+    m_info.executeMs = executeMs;
+    m_info.fetchMs = qMax<qint64>(0, elapsed - executeMs);
     if (result.value(QStringLiteral("kind")).toString() == QStringLiteral("resultSet")) {
         closeCursor();
         const QCborArray rows = result.value(QStringLiteral("rows")).toArray();
@@ -152,6 +188,9 @@ void QuerySession::onExecuted(const SqlStatement &statement, const QCborMap &res
         m_cursorId = result.value(QStringLiteral("cursorId")).toString();
         emit resultStarted(result.value(QStringLiteral("columns")).toArray());
         emit rowsReceived(rows, hasMore);
+        m_info.kind = ExecutionInfo::Kind::ResultSet;
+        m_info.rows = rows.size();
+        m_info.hasMore = hasMore;
         emit message(tr("%1 %n row(s) fetched in %2 ms%3", nullptr, int(rows.size()))
                          .arg(progress())
                          .arg(elapsed)
@@ -164,7 +203,13 @@ void QuerySession::onExecuted(const SqlStatement &statement, const QCborMap &res
         emit message(tr("%1 %2 in %3 ms").arg(progress(), what).arg(elapsed), false);
         if (dml && !m_autoCommit)
             setPendingTransaction(true);
+        m_info.kind = dml && count >= 0 ? ExecutionInfo::Kind::Update : ExecutionInfo::Kind::Other;
+        m_info.rows = qMax<qint64>(0, count);
     }
+    emit executionInfoChanged(m_info);
+    emit statementFinished(statement, true, elapsed,
+                           m_info.kind == ExecutionInfo::Kind::Other ? -1 : m_info.rows, QString());
+    emit statementSucceeded(statement);
     runNext();
 }
 
@@ -198,7 +243,12 @@ void QuerySession::fetchMore(int count)
                           const bool hasMore = result.value(QStringLiteral("hasMore")).toBool();
                           if (!hasMore)
                               self->m_cursorId.clear();
-                          emit self->rowsReceived(result.value(QStringLiteral("rows")).toArray(), hasMore);
+                          const QCborArray rows = result.value(QStringLiteral("rows")).toArray();
+                          emit self->rowsReceived(rows, hasMore);
+                          self->m_info.rows += rows.size();
+                          self->m_info.hasMore = hasMore;
+                          self->m_info.fetchMs += result.value(QStringLiteral("elapsedMs")).toInteger();
+                          emit self->executionInfoChanged(self->m_info);
                       });
 }
 
@@ -272,6 +322,38 @@ void QuerySession::setAutoCommit(bool autoCommit)
                               emit self->message(tr("Pending changes were committed (auto-commit on)."), false);
                           }
                           emit self->stateChanged();
+                      });
+}
+
+void QuerySession::explain(const SqlStatement &statement)
+{
+    if (!isConnected() || m_busy || !m_engine)
+        return;
+    setBusy(true);
+    emit message(statementForLog(QStringLiteral("EXPLAIN> "), statement.text), false);
+    QPointer<QuerySession> self(this);
+    m_engine->request(QStringLiteral("explain"),
+                      params({{QStringLiteral("sessionId"), m_sessionId}, {QStringLiteral("sql"), statement.text}}),
+                      [self, statement](const QCborMap &result, const EngineError &error) {
+                          if (!self)
+                              return;
+                          self->setBusy(false);
+                          if (error.isError()) {
+                              emit self->message(tr("Explain failed: %1").arg(error.message), true);
+                              // 오류 위치는 엔진이 앞에 붙인 EXPLAIN 구문 기준이라 에디터 위치와 맞지 않는다.
+                              EngineError withoutPosition = error;
+                              withoutPosition.position = -1;
+                              withoutPosition.line = -1;
+                              emit self->statementFailed(statement, withoutPosition);
+                              return;
+                          }
+                          const qint64 elapsed = result.value(QStringLiteral("elapsedMs")).toInteger();
+                          emit self->message(tr("Estimated plan in %1 ms").arg(elapsed), false);
+                          emit self->planReceived(result);
+                          ExecutionInfo info;
+                          info.kind = ExecutionInfo::Kind::Plan;
+                          info.executeMs = elapsed;
+                          emit self->executionInfoChanged(info);
                       });
 }
 

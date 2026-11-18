@@ -14,6 +14,10 @@ import java.util.concurrent.Executors
  * 결과는 페이지 단위로 보낸다. 남은 행이 있으면 커서를 열어 두고 fetch로 이어서 가져온다.
  */
 class Session(val id: String, private val type: String, private val connection: Connection) : AutoCloseable {
+    companion object {
+        private const val MAX_OBJECTS = 20_000
+    }
+
     private class Cursor(val statement: Statement, val resultSet: ResultSet, val types: IntArray) {
         fun close() {
             runCatching { resultSet.close() }
@@ -50,6 +54,9 @@ class Session(val id: String, private val type: String, private val connection: 
     }
 
     fun execute(sql: String, pageSize: Int, queryTimeoutSec: Int): Map<String, Any?> {
+        // DESC는 SQL*Plus·psql의 명령이라 Oracle·Tibero·PostgreSQL 서버가 모르므로 딕셔너리로 직접 답한다.
+        if (Describe.supports(type)) Describe.parse(sql)?.let { return describe(it) }
+
         val statement = connection.createStatement()
         var keepOpen = false
         val start = System.nanoTime()
@@ -63,6 +70,7 @@ class Session(val id: String, private val type: String, private val connection: 
             } finally {
                 running = null
             }
+            val executedAt = System.nanoTime()
 
             val result = linkedMapOf<String, Any?>()
             if (hasResultSet) {
@@ -90,7 +98,9 @@ class Session(val id: String, private val type: String, private val connection: 
                 result["kind"] = "update"
                 result["updateCount"] = statement.updateCount.toLong()
             }
-            result["elapsedMs"] = (System.nanoTime() - start) / 1_000_000
+            val finishedAt = System.nanoTime()
+            result["elapsedMs"] = (finishedAt - start) / 1_000_000
+            result["executeMs"] = (executedAt - start) / 1_000_000 // 나머지는 첫 페이지를 읽은 시간
             result["warnings"] = warnings(statement)
             result["output"] = readServerOutput()
             return result
@@ -99,8 +109,35 @@ class Session(val id: String, private val type: String, private val connection: 
         }
     }
 
+    /** DESC 결과. 행이 적으므로 한 번에 모두 보낸다. */
+    private fun describe(target: Describe.Target): Map<String, Any?> {
+        val start = System.nanoTime()
+        // PostgreSQL은 트랜잭션 안에서 문장이 하나라도 실패하면 트랜잭션 전체가 막힌다.
+        // 사용자의 열린 트랜잭션을 지키려고 세이브포인트 안에서 조회한다.
+        val savepoint = if (type == "postgres" && !connection.autoCommit) connection.setSavepoint() else null
+        val table = try {
+            Describe.describe(type, connection, target)
+        } catch (e: Exception) {
+            savepoint?.let { runCatching { connection.rollback(it) } }
+            throw e
+        }
+        savepoint?.let { runCatching { connection.releaseSavepoint(it) } }
+        val elapsedMs = (System.nanoTime() - start) / 1_000_000
+        return linkedMapOf(
+            "kind" to "resultSet",
+            "columns" to table.columns.map { mapOf("name" to it, "typeName" to "VARCHAR2", "numeric" to false) },
+            "rows" to table.rows,
+            "hasMore" to false,
+            "elapsedMs" to elapsedMs,
+            "executeMs" to elapsedMs,
+            "warnings" to emptyList<String>(),
+            "output" to emptyList<String>(),
+        )
+    }
+
     fun fetch(cursorId: String, count: Int): Map<String, Any?> {
         val cursor = cursors[cursorId] ?: throw IllegalStateException("The result is no longer available.")
+        val start = System.nanoTime()
         val page = try {
             readPage(cursor.resultSet, cursor.types, count)
         } catch (e: Exception) {
@@ -108,8 +145,18 @@ class Session(val id: String, private val type: String, private val connection: 
             throw e
         }
         if (!page.hasMore) cursors.remove(cursorId)?.close()
-        return mapOf("rows" to page.rows, "hasMore" to page.hasMore)
+        return mapOf("rows" to page.rows, "hasMore" to page.hasMore, "elapsedMs" to (System.nanoTime() - start) / 1_000_000)
     }
+
+    /** 예상 실행 계획. 문장은 실행하지 않는다. */
+    fun explain(sql: String): Map<String, Any?> {
+        val start = System.nanoTime()
+        val plan = Explain.explain(type, connection, sql)
+        return plan + ("elapsedMs" to (System.nanoTime() - start) / 1_000_000)
+    }
+
+    /** 객체 하나의 DDL 스크립트 (코멘트, 인덱스, 트리거, 시노님, 권한 포함) */
+    fun ddl(request: Ddl.Request): Map<String, Any?> = Ddl.script(type, connection, request).toMap()
 
     fun closeCursor(cursorId: String) {
         cursors.remove(cursorId)?.close()
@@ -118,6 +165,122 @@ class Session(val id: String, private val type: String, private val connection: 
     fun cancel() {
         val statement = running ?: return
         runCatching { statement.cancel() }.onFailure { Log.error("Cancel failed", it) }
+    }
+
+    // ---------------------------------------------------------------------
+    // 메타데이터 (Database Explorer). JDBC DatabaseMetaData를 쓴다.
+    // MySQL·MariaDB는 데이터베이스(catalog)가 스키마 역할을 하므로 catalog로 조회한다.
+
+    private val usesCatalogs = type == "mysql" || type == "mariadb"
+    private val oracleFamily = type == "oracle" || type == "tibero"
+
+    fun schemas(): Map<String, Any?> {
+        val meta = connection.metaData
+        val names = ArrayList<String>()
+        (if (usesCatalogs) meta.catalogs else meta.schemas).use { rs ->
+            while (rs.next()) rs.getString(1)?.let { names.add(it) }
+        }
+        val current = runCatching { if (usesCatalogs) connection.catalog else connection.schema }.getOrNull()
+        return mapOf("names" to names.sorted(), "current" to current)
+    }
+
+    fun objects(schema: String): Map<String, Any?> {
+        val meta = connection.metaData
+        val catalog = if (usesCatalogs) schema else null
+        val schemaPattern = if (usesCatalogs) null else pattern(schema)
+        val objects = ArrayList<Map<String, Any?>>()
+
+        meta.getTables(catalog, schemaPattern, "%", null).use { rs ->
+            while (rs.next() && objects.size < MAX_OBJECTS) {
+                objects.add(
+                    mapOf(
+                        "name" to rs.getString("TABLE_NAME"),
+                        "type" to (rs.getString("TABLE_TYPE") ?: "TABLE"),
+                        "remarks" to rs.getString("REMARKS"),
+                    ),
+                )
+            }
+        }
+
+        // 함수와 프로시저. Oracle의 패키지 안 루틴(카탈로그 = 패키지 이름)은 제외한다.
+        val functions = HashSet<String>()
+        runCatching {
+            meta.getFunctions(catalog, schemaPattern, "%").use { rs ->
+                while (rs.next() && objects.size < MAX_OBJECTS) {
+                    if (oracleFamily && rs.getString("FUNCTION_CAT") != null) continue
+                    val name = rs.getString("FUNCTION_NAME") ?: continue
+                    if (functions.add(name)) objects.add(mapOf("name" to name, "type" to "FUNCTION", "remarks" to rs.getString("REMARKS")))
+                }
+            }
+        }
+        runCatching {
+            val procedures = HashSet<String>()
+            meta.getProcedures(catalog, schemaPattern, "%").use { rs ->
+                while (rs.next() && objects.size < MAX_OBJECTS) {
+                    if (oracleFamily && rs.getString("PROCEDURE_CAT") != null) continue
+                    val name = rs.getString("PROCEDURE_NAME") ?: continue
+                    if (name !in functions && procedures.add(name)) {
+                        objects.add(mapOf("name" to name, "type" to "PROCEDURE", "remarks" to rs.getString("REMARKS")))
+                    }
+                }
+            }
+        }
+        return mapOf("objects" to objects, "truncated" to (objects.size >= MAX_OBJECTS))
+    }
+
+    fun columns(schema: String, table: String): Map<String, Any?> {
+        val meta = connection.metaData
+        val catalog = if (usesCatalogs) schema else null
+        val exactSchema = if (usesCatalogs) null else schema
+
+        val primaryKey = HashSet<String>()
+        runCatching {
+            meta.getPrimaryKeys(catalog, exactSchema, table).use { rs ->
+                while (rs.next()) rs.getString("COLUMN_NAME")?.let { primaryKey.add(it) }
+            }
+        }
+
+        val columns = ArrayList<Map<String, Any?>>()
+        meta.getColumns(catalog, if (usesCatalogs) null else pattern(schema), pattern(table), "%").use { rs ->
+            while (rs.next()) {
+                val name = rs.getString("COLUMN_NAME")
+                columns.add(
+                    mapOf(
+                        "name" to name,
+                        "type" to columnType(rs),
+                        "nullable" to (rs.getInt("NULLABLE") != java.sql.DatabaseMetaData.columnNoNulls),
+                        "primaryKey" to (name in primaryKey),
+                        "default" to rs.getString("COLUMN_DEF")?.trim(),
+                        "remarks" to rs.getString("REMARKS"),
+                    ),
+                )
+            }
+        }
+        return mapOf("columns" to columns)
+    }
+
+    /** 메타데이터 조회는 LIKE 패턴이므로 이름의 _ 와 % 를 이스케이프한다. */
+    private fun pattern(name: String): String {
+        val escape = runCatching { connection.metaData.searchStringEscape }.getOrNull()
+        if (escape.isNullOrEmpty()) return name
+        return name.replace(escape, escape + escape).replace("_", escape + "_").replace("%", escape + "%")
+    }
+
+    private fun columnType(rs: ResultSet): String {
+        val typeName = rs.getString("TYPE_NAME") ?: "?"
+        val size = rs.getInt("COLUMN_SIZE").takeUnless { rs.wasNull() } ?: 0
+        val digits = rs.getInt("DECIMAL_DIGITS").takeUnless { rs.wasNull() } ?: 0
+        if (typeName.contains('(')) return typeName
+        return when (rs.getInt("DATA_TYPE")) {
+            Types.CHAR, Types.VARCHAR, Types.NCHAR, Types.NVARCHAR, Types.BINARY, Types.VARBINARY ->
+                if (size > 0) "$typeName($size)" else typeName
+            Types.NUMERIC, Types.DECIMAL -> when {
+                size > 0 && digits > 0 -> "$typeName($size,$digits)"
+                size > 0 -> "$typeName($size)"
+                else -> typeName
+            }
+            else -> typeName
+        }
     }
 
     fun commit() = connection.commit()
