@@ -42,6 +42,8 @@ qt_add_library(dbaro_lib STATIC
     src/core/WorkspaceStore.h
     src/ipc/EngineClient.cpp
     src/ipc/EngineClient.h
+    src/ui/AppController.cpp
+    src/ui/AppController.h
     src/ui/BindDialog.cpp
     src/ui/BindDialog.h
     src/ui/ConnectionBar.cpp
@@ -56,6 +58,8 @@ qt_add_library(dbaro_lib STATIC
     src/ui/FindBar.h
     src/ui/HistoryDialog.cpp
     src/ui/HistoryDialog.h
+    src/ui/LauncherWindow.cpp
+    src/ui/LauncherWindow.h
     src/ui/Icons.cpp
     src/ui/Icons.h
     src/ui/MainWindow.cpp
@@ -76,6 +80,8 @@ qt_add_library(dbaro_lib STATIC
     src/ui/ResultPanel.h
     src/ui/ScrollHelpers.cpp
     src/ui/ScrollHelpers.h
+    src/ui/SingleInstance.cpp
+    src/ui/SingleInstance.h
     src/ui/SqlCompleter.cpp
     src/ui/SqlCompleter.h
     src/ui/SqlEditor.cpp
@@ -85,6 +91,8 @@ qt_add_library(dbaro_lib STATIC
     src/ui/Theme.cpp
     src/ui/Theme.h
     src/ui/UiHelpers.h
+    src/ui/WindowsIntegration.cpp
+    src/ui/WindowsIntegration.h
 )
 
 # 자체 아이콘 (:/icons/<이름>.svg)
@@ -124,7 +132,8 @@ target_link_libraries(dbaro_lib PUBLIC
 
 if(WIN32)
     # SecretStore: Windows 자격 증명 관리자 (CredWriteW 등)
-    target_link_libraries(dbaro_lib PRIVATE Advapi32)
+    # WindowsIntegration: 작업 표시줄 점프 목록(COM), 창 테두리 색(DWM)
+    target_link_libraries(dbaro_lib PRIVATE Advapi32 Ole32 Shell32 Propsys Shlwapi Dwmapi User32)
 endif()
 
 qt_add_executable(dbaro

@@ -38,12 +38,16 @@
     <!-- 시작 메뉴 바로 가기. 사용자별 설치에서도 동작하도록 키 경로는 HKMU(사용자별이면 HKCU) 레지스트리 값이다. -->
     <StandardDirectory Id="ProgramMenuFolder">
       <Component Id="StartMenuShortcut">
+        <!-- System.AppUserModel.ID는 앱이 쓰는 값(WindowsIntegration의 DBaro.Desktop)과 같아야
+             작업 표시줄에 고정한 아이콘, 열린 창들, 점프 목록(저장된 연결)이 한 아이콘으로 묶인다. -->
         <Shortcut Id="DBaroShortcut"
                   Name="DBaro"
                   Description="Cross-platform database tool"
                   Target="[INSTALLFOLDER]dbaro.exe"
                   WorkingDirectory="INSTALLFOLDER"
-                  Icon="DBaroIcon" />
+                  Icon="DBaroIcon">
+          <ShortcutProperty Key="System.AppUserModel.ID" Value="DBaro.Desktop" />
+        </Shortcut>
         <RegistryValue Root="HKMU" Key="Software\DBaro\Installer" Name="StartMenuShortcut"
                        Type="integer" Value="1" KeyPath="yes" />
       </Component>

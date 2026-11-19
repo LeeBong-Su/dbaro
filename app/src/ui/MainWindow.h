@@ -1,22 +1,19 @@
 #pragma once
 
-#include "core/ConnectionStore.h"
+#include "core/ConnectionProfile.h"
 #include "core/QueryHistory.h"
 #include "core/SqlBinds.h"
 #include "core/WorkspaceStore.h"
 
 #include <QCborMap>
-#include <QHash>
 #include <QList>
 #include <QMainWindow>
 #include <QPointer>
 
 #include <functional>
 
-class EngineClient;
-class MetadataService;
+class AppController;
 class QAction;
-class QComboBox;
 class QDockWidget;
 class QLabel;
 class QTabWidget;
@@ -26,32 +23,44 @@ class ObjectExplorer;
 class QueryTab;
 struct SqlStatement;
 
-// 메인 창 (IntelliJ식 배치).
-// - 위: 메인 툴바. 왼쪽은 연결 선택, 오른쪽은 실행·중지·트랜잭션
-// - 왼쪽 끝: 도구 창 막대 (Database Explorer 열기/닫기)
-// - 가운데: 쿼리 탭 (에디터 + 결과, 탭마다 별도 DB 세션). 탭은 연결마다 따로 두고,
-//   툴바나 탐색기에서 연결을 바꾸면 그 연결로 마지막에 쓰던 탭으로 옮겨 간다.
+// 연결 하나의 창 (IntelliJ식 배치). 연결마다 창이 따로 열리고, 창 안의 쿼리 탭은 모두 그 연결을 쓴다.
+// - 위: 메인 툴바. 왼쪽은 연결 선택 창·새 탭, 오른쪽은 실행·중지·트랜잭션
+// - 왼쪽 끝: 도구 창 막대 (Database Explorer: 이 연결의 스키마·객체)
+// - 가운데: 쿼리 탭 (에디터 + 결과, 탭마다 별도 DB 세션)
 // - 아래: 상태 표시줄
+// 창 제목은 연결 이름이고, 창 테두리는 연결의 환경 색이다 (운영은 빨강, Windows 11).
 class MainWindow : public QMainWindow
 {
     Q_OBJECT
 
 public:
-    explicit MainWindow(QWidget *parent = nullptr);
+    MainWindow(AppController *app, const QString &connectionId, QWidget *parent = nullptr);
     ~MainWindow() override;
+
+    QString connectionId() const { return m_connectionId; }
+    const ConnectionProfile *profile() const;
+    // 이 연결의 크기·위치를 기억하고 있는지 (없으면 새 창을 조금 비켜 놓는다)
+    bool hasSavedGeometry() const { return m_hasSavedGeometry; }
 
     // SQL 파일을 연다. 이미 열린 파일이면 그 탭으로 옮겨 간다. 연 파일 수를 돌려준다.
     int openFiles(const QStringList &paths);
     // 탭을 저장한다. path가 비어 있으면 탭의 파일에 (파일이 없으면 저장 대화상자). 저장했으면 true.
     bool saveTab(QueryTab *tab, const QString &path = {});
-    // 열린 탭(SQL, 파일, 연결)을 작업 공간 파일에 남긴다. 편집하면 잠시 뒤 저절로 불린다.
+    // 열린 탭(SQL, 파일)을 작업 공간 파일에 남긴다. 편집하면 잠시 뒤 저절로 불린다.
     void saveWorkspace();
     // 실행 기록 (F8)
-    const QueryHistory &history() const { return m_history; }
+    const QueryHistory &history() const;
     void showHistory();
+    // 연결 설정이 바뀌었을 때 (이름, 환경 색, DB 종류)
+    void refreshConnection();
+
+signals:
+    void windowClosed();
 
 protected:
     void closeEvent(QCloseEvent *event) override;
+    void showEvent(QShowEvent *event) override;
+    void paintEvent(QPaintEvent *event) override;
 
 private:
     void createActions();
@@ -61,7 +70,6 @@ private:
     void createToolWindowStripe();
     void createStatusBar();
     void restoreLayout();
-    void loadConnections();
     bool restoreWorkspace(); // 남겨 둔 탭을 다시 연다. 하나라도 열었으면 true
     void scheduleWorkspaceSave();
     void openFileDialog();
@@ -71,8 +79,7 @@ private:
 
     QueryTab *currentQueryTab() const;
     QList<QueryTab *> queryTabs() const;
-    QueryTab *addQueryTab(); // 지금 탭과 같은 연결로 새 탭
-    QueryTab *addQueryTabFor(const QString &connectionId);
+    QueryTab *addQueryTab();
     void closeQueryTab(int index);
     void openObject(const QString &connectionId, const QString &schema, const QString &name);
 
@@ -87,48 +94,39 @@ private:
     void requestDdl(const QString &connectionId, const QString &schema, const QString &name, bool schemaQuoted,
                     bool nameQuoted, QueryTab *source);
     void openDdlTab(const QString &connectionId, const QCborMap &result);
-    // 탭의 세션을 그 탭의 연결에 붙인 뒤(필요하면 비밀번호를 묻고 접속) work를 부른다.
+    // 탭의 세션을 이 창의 연결에 붙인 뒤(필요하면 비밀번호를 묻고 접속) work를 부른다.
     void withConnectedSession(QueryTab *tab, std::function<void()> work);
     bool requireConnection(QueryTab *tab);
     bool confirmSafeToRun(QueryTab *tab, const QList<SqlStatement> &statements);
     bool confirmDiscardTransaction(QueryTab *tab, const QString &action);
-    bool passwordFor(const ConnectionProfile &profile, QString *password, bool interactive = true);
 
-    void openConnectionDialog(bool startNew, const QString &selectId = {});
-    void refreshConnectionViews();
-    void activateConnection(const QString &connectionId);
-    QueryTab *recentTabFor(const QString &connectionId) const;
-    void updateTabTitle(QueryTab *tab);
-    QString uniqueTabTitle(const QString &base, const QueryTab *except) const;
-    void setTabConnection(QueryTab *tab, const QString &connectionId);
-    void syncConnectionComboToCurrentTab();
+    void applyConnection(QueryTab *tab);
+    void applyWindowColor();
     void updateConnectionStatus();
     void updateActionStates();
     void updateCursorPosition(int line, int column);
     void updateTransactionLabel();
 
-    ConnectionStore m_store;
-    WorkspaceStore m_workspaceStore;
-    QueryHistory m_history;
-    QHash<QString, SqlBinds::Value> m_bindValues; // 바인드 변수마다 마지막에 넣은 값 (앱이 켜져 있는 동안)
+    static constexpr int kFrameWidth = 4; // 창 안쪽 환경 색 띠 두께 (논리 픽셀)
+
+    AppController *m_app = nullptr;
+    QString m_connectionId;
+    QColor m_frameColor; // 연결의 환경 색 (환경이 없으면 유효하지 않음 → 띠 없음)
+    bool m_hasSavedGeometry = false;
     QTimer *m_workspaceTimer = nullptr;
     bool m_restoringWorkspace = false;
-    EngineClient *m_engine = nullptr;
-    MetadataService *m_metadata = nullptr; // Explorer와 자동완성이 함께 쓰는 메타데이터 세션·캐시
-    QHash<QString, QString> m_sessionPasswords; // 저장하지 않은 비밀번호는 앱이 켜져 있는 동안만 기억한다
 
     QTabWidget *m_tabs = nullptr;
     QDockWidget *m_explorerDock = nullptr;
     ObjectExplorer *m_explorer = nullptr;
-    QComboBox *m_connectionCombo = nullptr;
     QToolButton *m_transactionButton = nullptr;
-    bool m_syncingCombo = false;
 
     QAction *m_newTabAction = nullptr;
     QAction *m_closeTabAction = nullptr;
     QAction *m_openFileAction = nullptr;
     QAction *m_saveAction = nullptr;
     QAction *m_saveAsAction = nullptr;
+    QAction *m_closeWindowAction = nullptr;
     QAction *m_findAction = nullptr;
     QAction *m_replaceAction = nullptr;
     QAction *m_findNextAction = nullptr;
@@ -138,6 +136,7 @@ private:
     QAction *m_exportAction = nullptr;
     QAction *m_quitAction = nullptr;
     QAction *m_newConnectionAction = nullptr;
+    QAction *m_editConnectionAction = nullptr;
     QAction *m_manageConnectionsAction = nullptr;
     QAction *m_executeAction = nullptr;
     QAction *m_executeScriptAction = nullptr;
@@ -157,5 +156,4 @@ private:
     QLabel *m_encodingLabel = nullptr;
 
     int m_tabCounter = 0;
-    QList<QPointer<QueryTab>> m_tabHistory; // 최근에 쓴 탭이 앞
 };

@@ -180,6 +180,13 @@ QLabel#findStatus { color: @textDim@; }
 QLabel#findStatus[error="true"] { color: #e06c6c; }
 
 QTableView#historyList { background: @editor@; }
+
+QWidget#launcherWindow { background: @panel@; }
+QLabel#launcherTitle { font-size: 22px; font-weight: 600; }
+QLabel#launcherSubtitle, QLabel#launcherEmpty { color: @textDim@; }
+QLineEdit#launcherFilter { background: @editor@; border: 1px solid @border@; border-radius: 4px; padding: 5px 8px; }
+QTreeWidget#launcherList { background: @editor@; border: 1px solid @border@; }
+QTreeWidget#launcherList::item { padding: 5px 2px; }
 )");
 
     const QList<QPair<QString, QColor>> tokens{

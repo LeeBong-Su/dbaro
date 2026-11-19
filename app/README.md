@@ -5,7 +5,7 @@ DB 연결은 직접 하지 않고 엔진 프로세스(`../engine`)에 맡긴다.
 
 | 폴더 | 역할 |
 |---|---|
-| `src/ui/` | 메인 창, SQL 에디터, 결과 그리드, 객체 탐색기, 연결 관리 화면, 테마(`Theme`), 아이콘(`Icons`) |
+| `src/ui/` | 앱 전체와 창 관리(`AppController`), 연결 선택 창(`LauncherWindow`), 연결 창(`MainWindow`), SQL 에디터, 결과 그리드, 객체 탐색기, 연결 관리 화면, 단일 실행(`SingleInstance`), 작업 표시줄 연동(`WindowsIntegration`), 테마(`Theme`), 아이콘(`Icons`) |
 | `src/core/` | 연결 정보 저장(`ConnectionStore`), 비밀번호 보안 저장(`SecretStore`), 방언별 문장 분리(`SqlSplitter`), 식별자 따옴표 처리(`SqlIdentifiers`), 자동완성 문맥 분석(`SqlCompletion`), 열린 탭 저장(`WorkspaceStore`), SQL 파일 인코딩(`TextFile`), 실행 기록(`QueryHistory`), 바인드 변수(`SqlBinds`), 결과 내보내기(`ResultExport`), SQL 정렬(`SqlFormatter`) |
 | `src/ipc/` | 엔진 프로세스 실행과 통신 (`EngineClient`) |
 | `resources/icons/` | 자체 아이콘 (SVG, `#ICON` 색은 테마에 맞춰 바뀜). 이후 번역(한국어·영어) |
@@ -34,7 +34,8 @@ DB 연결은 직접 하지 않고 엔진 프로세스(`../engine`)에 맡긴다.
 
 `DESC 테이블`(DESCRIBE)은 Oracle·Tibero·PostgreSQL에서도 쓸 수 있다. 서버 SQL이 아니라 SQL*Plus·psql 명령이라 DBaro 엔진이 직접 컬럼 목록(이름, NOT NULL, 타입, 코멘트)을 만들어 결과 그리드에 보여 준다. 프로시저·함수·패키지는 인자 목록이 나온다. SQL*Plus처럼 `;` 없이 줄 끝에서 끝난다.
 
-- 열린 탭은 저절로 남는다. 앱을 닫았다 열면 SQL, 탭마다의 연결, 열어 둔 파일이 그대로 돌아오고, 저장하지 않은 파일 수정도 남아 있다.
+- 연결마다 창이 따로 열린다. 시작하면 연결 선택 창이 뜨고, 연결을 고르면 그 연결의 창이 열린다. 다른 연결은 Ctrl+Alt+O(Database → Connections...)로 새 창에 연다. Windows 작업 표시줄의 DBaro 아이콘을 오른쪽 클릭하면 저장된 연결을 바로 열 수 있다.
+- 열린 탭은 연결마다 저절로 남는다. 그 연결 창을 다시 열면 SQL과 열어 둔 파일이 그대로 돌아오고, 저장하지 않은 파일 수정도 남아 있다.
 - 바인드 변수 `:name`, `?`(PostgreSQL 제외), SQL*Plus 치환 변수 `&name`·`&&name`(Oracle·Tibero)이 있으면 실행 전에 값을 묻는다. 지난번 값이 미리 채워지고, `&&`로 정한 값은 그 탭에서 다시 묻지 않는다.
 - 결과는 오른쪽 클릭 Export... (또는 Query → Export Results...)로 Excel(.xlsx), CSV, TSV, SQL INSERT, JSON, Markdown으로 내보낸다. 전체 행을 고르면 아직 안 가져온 행까지 가져온다.
 
