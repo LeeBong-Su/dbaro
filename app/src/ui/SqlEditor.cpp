@@ -3,10 +3,12 @@
 
 #include "SqlCompleter.h"
 
+#include "FontZoom.h"
 #include "ScrollHelpers.h"
 #include "SqlHighlighter.h"
 
 #include <QClipboard>
+#include <QDropEvent>
 #include <QGuiApplication>
 #include <QInputMethodEvent>
 #include <QKeyEvent>
@@ -15,6 +17,7 @@
 #include <QScrollBar>
 #include <QTextBlock>
 #include <QTimer>
+#include <QWheelEvent>
 
 namespace {
 
@@ -86,10 +89,14 @@ SqlEditor::SqlEditor(QWidget *parent)
                       QStringLiteral("Menlo"), QStringLiteral("DejaVu Sans Mono")});
     font.setStyleHint(QFont::Monospace);
     font.setFixedPitch(true);
-    font.setPointSize(11);
+    font.setPointSizeF(FontZoom::instance()->pointSize(FontZoom::Target::Editor, 11)); // Ctrl + 휠로 바꾼 크기
     setFont(font);
     setLineWrapMode(QPlainTextEdit::NoWrap);
     setTabStopDistance(fontMetrics().horizontalAdvance(QLatin1Char(' ')) * kIndentWidth);
+    connect(FontZoom::instance(), &FontZoom::changed, this, [this](FontZoom::Target target, qreal pointSize) {
+        if (target == FontZoom::Target::Editor)
+            applyFontSize(pointSize);
+    });
 
     m_lineNumberArea = new LineNumberArea(this);
     m_highlighter = new SqlHighlighter(document());
@@ -243,6 +250,13 @@ void SqlEditor::updateExtraSelections()
         selections.append(line);
     }
 
+    for (const QTextCursor &mark : std::as_const(m_wordMarks)) {
+        QTextEdit::ExtraSelection selection;
+        selection.cursor = mark;
+        selection.format.setBackground(Theme::searchMatchColor());
+        selections.append(selection);
+    }
+
     for (int i = 0; i < m_searchMatches.size(); ++i) {
         QTextEdit::ExtraSelection match;
         match.cursor = m_searchMatches[i];
@@ -319,6 +333,9 @@ void SqlEditor::appendBracketMatch(QList<QTextEdit::ExtraSelection> &selections)
 
 void SqlEditor::onCursorPositionChanged()
 {
+    // 두 번 클릭한 단어에서 선택이 바뀌면(다른 곳 클릭, 입력, Shift+방향키) 표시를 지운다.
+    if (!m_wordMarks.isEmpty() && textCursor().selectedText().compare(m_markedWord, Qt::CaseInsensitive) != 0)
+        clearWordMarks();
     // 우리 코드가 아닌 곳에서 커서가 움직였으면 세로 커서를 끝낸다.
     if (!m_updatingCursors && !m_columnDragging && hasExtraCursors()) {
         m_cursors.clear();
@@ -378,11 +395,23 @@ QString SqlEditor::objectNameAtCursor() const
 
 void SqlEditor::keyPressEvent(QKeyEvent *event)
 {
+    // Ctrl+Tab, Ctrl+Shift+Tab, Ctrl+PgUp/PgDn: 탭 옮겨 가기 (창이 처리하도록 넘긴다)
+    if ((event->modifiers() & Qt::ControlModifier)
+        && (event->key() == Qt::Key_Tab || event->key() == Qt::Key_Backtab || event->key() == Qt::Key_PageUp
+            || event->key() == Qt::Key_PageDown)) {
+        event->ignore();
+        return;
+    }
     // 자동완성 목록이 열려 있으면 Enter/Tab/Esc는 목록이 처리한다.
     if (m_completer->keyPressBefore(event))
         return;
     if (event->key() == Qt::Key_Space && (event->modifiers() & Qt::ControlModifier)) {
         m_completer->trigger(true);
+        return;
+    }
+    if (event->key() == Qt::Key_Escape && event->modifiers() == Qt::NoModifier && !m_wordMarks.isEmpty()
+        && !hasExtraCursors()) {
+        clearWordMarks();
         return;
     }
     processKey(event);
@@ -428,7 +457,7 @@ void SqlEditor::processKey(QKeyEvent *event)
         }
         return;
     }
-    if (key == Qt::Key_Backtab) {
+    if (key == Qt::Key_Backtab && !ctrlOrAlt) { // Ctrl+Shift+Tab은 이전 탭으로 (창의 단축키)
         indentLines(true);
         return;
     }
@@ -654,6 +683,92 @@ void SqlEditor::mouseReleaseEvent(QMouseEvent *event)
     QPlainTextEdit::mouseReleaseEvent(event);
 }
 
+void SqlEditor::dropEvent(QDropEvent *event)
+{
+    // 탐색기에서 끌어다 놓은 이름: 놓은 자리에 들어가고, 바로 이어서 입력할 수 있게 에디터로 초점을 옮긴다.
+    QPlainTextEdit::dropEvent(event);
+    activateWindow();
+    setFocus(Qt::MouseFocusReason);
+}
+
+void SqlEditor::mouseDoubleClickEvent(QMouseEvent *event)
+{
+    QPlainTextEdit::mouseDoubleClickEvent(event);
+    if (event->button() != Qt::LeftButton || (event->modifiers() & Qt::AltModifier) || hasExtraCursors())
+        return;
+    markWordAt(cursorForPosition(event->position().toPoint()).position());
+}
+
+namespace {
+
+bool isWordChar(QChar ch, SqlDialect dialect)
+{
+    if (ch.isLetterOrNumber() || ch == u'_' || ch == u'$')
+        return true;
+    return ch == u'#' && dialect == SqlDialect::Oracle; // Oracle·Tibero
+}
+
+} // namespace
+
+void SqlEditor::markWordAt(int position)
+{
+    const QString text = document()->toPlainText(); // 블록 사이는 줄바꿈 한 글자라 위치가 문서 위치와 같다
+    int at = position;
+    if (at >= text.size() || !isWordChar(text.at(at), m_dialect))
+        --at; // 단어 끝 바로 뒤를 눌렀을 때
+    if (at < 0 || at >= text.size() || !isWordChar(text.at(at), m_dialect)) {
+        clearWordMarks();
+        return;
+    }
+    int start = at;
+    while (start > 0 && isWordChar(text.at(start - 1), m_dialect))
+        --start;
+    int end = at + 1;
+    while (end < text.size() && isWordChar(text.at(end), m_dialect))
+        ++end;
+    const QString word = text.mid(start, end - start);
+
+    // 같은 단어를 찾는다 (대소문자 무시, 앞뒤가 단어 글자가 아닌 곳). 아주 긴 스크립트는 앞쪽 일부만.
+    constexpr int kMaxMarks = 10000;
+    QList<QTextCursor> marks;
+    for (int from = 0; marks.size() < kMaxMarks;) {
+        const int found = text.indexOf(word, from, Qt::CaseInsensitive);
+        if (found < 0)
+            break;
+        from = found + word.size();
+        if (found > 0 && isWordChar(text.at(found - 1), m_dialect))
+            continue;
+        if (from < text.size() && isWordChar(text.at(from), m_dialect))
+            continue;
+        QTextCursor mark(document());
+        mark.setPosition(found);
+        mark.setPosition(from, QTextCursor::KeepAnchor);
+        marks.append(mark);
+    }
+
+    // 선택을 SQL 단어 전체로 맞춘다 (Qt 기본 단어 선택은 $, #에서 끊긴다).
+    m_markedWord = word;
+    m_wordMarks.clear(); // 선택을 바꾸는 동안 onCursorPositionChanged가 지우지 않게
+    QTextCursor cursor = textCursor();
+    cursor.setPosition(start);
+    cursor.setPosition(end, QTextCursor::KeepAnchor);
+    setTextCursor(cursor);
+
+    m_wordMarks = marks;
+    updateExtraSelections();
+    emit wordMarksChanged(word, int(marks.size()));
+}
+
+void SqlEditor::clearWordMarks()
+{
+    if (m_wordMarks.isEmpty() && m_markedWord.isEmpty())
+        return;
+    m_wordMarks.clear();
+    m_markedWord.clear();
+    updateExtraSelections();
+    emit wordMarksChanged(QString(), 0);
+}
+
 void SqlEditor::paintEvent(QPaintEvent *event)
 {
     QPlainTextEdit::paintEvent(event);
@@ -669,6 +784,27 @@ void SqlEditor::paintEvent(QPaintEvent *event)
         const QRect rect = cursorRect(m_cursors[k]);
         painter.fillRect(QRect(rect.left(), rect.top(), qMax(1, cursorWidth()), rect.height()), caret);
     }
+}
+
+void SqlEditor::wheelEvent(QWheelEvent *event)
+{
+    // Ctrl + 휠: 글자 크기 (모든 SQL 탭에 같이 적용되고 다음에도 유지된다)
+    if (FontZoom::instance()->handleWheel(event, FontZoom::Target::Editor, font().pointSizeF()))
+        return;
+    QPlainTextEdit::wheelEvent(event);
+}
+
+void SqlEditor::applyFontSize(qreal pointSize)
+{
+    if (qFuzzyCompare(font().pointSizeF(), pointSize))
+        return;
+    QFont changed = font();
+    changed.setPointSizeF(pointSize);
+    setFont(changed);
+    setTabStopDistance(fontMetrics().horizontalAdvance(QLatin1Char(' ')) * kIndentWidth);
+    updateLineNumberAreaWidth();
+    m_lineNumberArea->update();
+    ensureCursorVisible();
 }
 
 void SqlEditor::changeEvent(QEvent *event)

@@ -7,20 +7,32 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Qt 6.8 이상 (개발 PC는 6.10.3). LGPLv3로 쓰려면 동적 링크를 유지한다.
 find_package(Qt6 6.8 REQUIRED COMPONENTS Widgets Network Svg)
+# .xlsx(ZIP) 읽기에 Qt의 QZipReader를 쓴다 (Qt 비공개 API: Qt를 올릴 때 확인한다)
+find_package(Qt6 6.8 REQUIRED COMPONENTS CorePrivate)
 qt_standard_project_setup()
 
 # 앱 코드 전체. 실행 파일과 이후의 테스트가 함께 링크한다.
 qt_add_library(dbaro_lib STATIC
+    src/cli/CliApp.cpp
+    src/cli/CliApp.h
+    src/cli/CliConsole.cpp
+    src/cli/CliConsole.h
     src/core/ConnectSpec.cpp
     src/core/ConnectSpec.h
     src/core/ConnectionProfile.cpp
     src/core/ConnectionProfile.h
     src/core/ConnectionStore.cpp
     src/core/ConnectionStore.h
+    src/core/DataImport.cpp
+    src/core/DataImport.h
     src/core/QueryHistory.cpp
     src/core/QueryHistory.h
+    src/core/ResultEdits.cpp
+    src/core/ResultEdits.h
     src/core/ResultExport.cpp
     src/core/ResultExport.h
+    src/core/ScriptFolders.cpp
+    src/core/ScriptFolders.h
     src/core/SecretStore.cpp
     src/core/SecretStore.h
     src/core/SqlBinds.cpp
@@ -38,6 +50,8 @@ qt_add_library(dbaro_lib STATIC
     src/core/SqlSplitter.h
     src/core/TextFile.cpp
     src/core/TextFile.h
+    src/core/TextTable.cpp
+    src/core/TextTable.h
     src/core/WorkspaceStore.cpp
     src/core/WorkspaceStore.h
     src/ipc/EngineClient.cpp
@@ -49,6 +63,8 @@ qt_add_library(dbaro_lib STATIC
     src/ui/ConnectionBar.cpp
     src/ui/ConnectionBar.h
     src/ui/ConnectionDialog.cpp
+    src/ui/ConsoleTab.cpp
+    src/ui/ConsoleTab.h
     src/ui/ConnectionDialog.h
     src/ui/EditorTabs.cpp
     src/ui/EditorTabs.h
@@ -56,8 +72,12 @@ qt_add_library(dbaro_lib STATIC
     src/ui/ExportDialog.h
     src/ui/FindBar.cpp
     src/ui/FindBar.h
+    src/ui/FontZoom.cpp
+    src/ui/FontZoom.h
     src/ui/HistoryDialog.cpp
     src/ui/HistoryDialog.h
+    src/ui/ImportDialog.cpp
+    src/ui/ImportDialog.h
     src/ui/LauncherWindow.cpp
     src/ui/LauncherWindow.h
     src/ui/Icons.cpp
@@ -80,6 +100,10 @@ qt_add_library(dbaro_lib STATIC
     src/ui/ResultPanel.h
     src/ui/ScrollHelpers.cpp
     src/ui/ScrollHelpers.h
+    src/ui/PlanObjectWindow.cpp
+    src/ui/PlanObjectWindow.h
+    src/ui/ScriptFoldersDialog.cpp
+    src/ui/ScriptFoldersDialog.h
     src/ui/SingleInstance.cpp
     src/ui/SingleInstance.h
     src/ui/SqlCompleter.cpp
@@ -88,6 +112,8 @@ qt_add_library(dbaro_lib STATIC
     src/ui/SqlEditor.h
     src/ui/SqlHighlighter.cpp
     src/ui/SqlHighlighter.h
+    src/ui/TableDetailTab.cpp
+    src/ui/TableDetailTab.h
     src/ui/Theme.cpp
     src/ui/Theme.h
     src/ui/UiHelpers.h
@@ -104,6 +130,7 @@ qt_add_resources(dbaro_lib "icons"
         resources/icons/close.svg
         resources/icons/column.svg
         resources/icons/commit.svg
+        resources/icons/console.svg
         resources/icons/database-add.svg
         resources/icons/database.svg
         resources/icons/dbaro.svg
@@ -129,6 +156,7 @@ target_link_libraries(dbaro_lib PUBLIC
     Qt6::Network
     Qt6::Svg
 )
+target_link_libraries(dbaro_lib PRIVATE Qt6::CorePrivate)
 
 if(WIN32)
     # SecretStore: Windows 자격 증명 관리자 (CredWriteW 등)
@@ -152,4 +180,17 @@ endif()
 set_target_properties(dbaro PROPERTIES
     WIN32_EXECUTABLE ON
     MACOSX_BUNDLE ON
+)
+
+# 명령줄 도구 (콘솔 프로그램). GUI와 같은 폴더에 두고 같은 연결 목록·비밀번호·실행 기록을 쓴다.
+qt_add_executable(dbaro-cli
+    src/cli/main.cpp
+)
+target_link_libraries(dbaro-cli PRIVATE dbaro_lib)
+if(WIN32)
+    target_sources(dbaro-cli PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/dbaro.rc")
+endif()
+set_target_properties(dbaro-cli PROPERTIES
+    WIN32_EXECUTABLE OFF
+    MACOSX_BUNDLE OFF
 )

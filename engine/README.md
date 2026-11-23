@@ -7,7 +7,7 @@
 |---|---|
 | `ipc/` | CBOR 인코딩, 메시지 프레임, 요청 처리 서버 |
 | `driver/` | JDBC 드라이버 동적 로딩, Maven Central에서 내려받기(SHA-1 확인), 사용자 지정 jar(Tibero) |
-| `exec/` | 연결, 실행·취소, 결과 페이지, 트랜잭션, DBMS_OUTPUT, 값 변환, 오류 위치 |
+| `exec/` | 연결, 실행·취소, 결과 페이지, 트랜잭션, DBMS_OUTPUT, 값 변환, 오류 위치, DDL·DESC·실행 계획, 테이블 정보, 계획 객체 정보(`PlanObject`), 스키마 바꾸기 |
 | `dialect/` | DB 방언 계열별 처리 (이후 메타데이터 조회에 쓴다) |
 
 ## 드라이버

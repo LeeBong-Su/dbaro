@@ -182,7 +182,7 @@ Write-Step 'Building the app (Release)'
 $buildDir = Join-Path $repo 'build\package'
 Invoke-Native $cmake @('-S', (Join-Path $repo 'app'), '-B', $buildDir, '-G', 'Visual Studio 17 2022', '-A', 'x64',
     "-DCMAKE_PREFIX_PATH=$QtDir")
-Invoke-Native $cmake @('--build', $buildDir, '--config', 'Release', '--target', 'dbaro')
+Invoke-Native $cmake @('--build', $buildDir, '--config', 'Release', '--target', 'dbaro', 'dbaro-cli')
 
 Write-Step 'Building the engine'
 $env:JAVA_HOME = $JdkHome
@@ -194,6 +194,7 @@ Write-Step "Staging $stage"
 if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
 New-Item -ItemType Directory -Path $stage -Force | Out-Null
 Copy-Item (Join-Path $buildDir 'Release\dbaro.exe') $stage
+Copy-Item (Join-Path $buildDir 'Release\dbaro-cli.exe') $stage
 
 Invoke-Native (Join-Path $QtDir 'bin\windeployqt.exe') @('--release', '--no-translations', '--no-system-d3d-compiler',
     '--no-opengl-sw', '--no-compiler-runtime', (Join-Path $stage 'dbaro.exe'))

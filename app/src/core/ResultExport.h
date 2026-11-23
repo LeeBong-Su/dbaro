@@ -44,4 +44,7 @@ bool isBinary(ExportOptions::Format format); // 클립보드로 보낼 수 없�
 // 표의 값 하나를 글로 (NULL은 빈 문자열)
 QString valueText(const QCborValue &value);
 
+// 값을 SQL 문장에 넣을 글로 (NULL, 숫자 컬럼은 숫자 그대로, Oracle 날짜는 TO_DATE/TO_TIMESTAMP, 바이너리는 16진)
+QString sqlLiteral(const ExportColumn &column, const QCborValue &value, SqlDialect dialect);
+
 } // namespace ResultExport

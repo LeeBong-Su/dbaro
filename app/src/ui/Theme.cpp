@@ -168,6 +168,13 @@ QListView#completionPopup::item { padding: 2px 6px; border-radius: 3px; }
 QListView#completionPopup::item:selected { background: @selection@; color: @selectionText@; }
 
 QTreeView#explorerTree { background: @panel@; }
+QTreeView#planTree::item { padding: 4px 4px; }
+QComboBox#schemaSwitcher { font-weight: 600; }
+QWidget#planObjectWindow { background: @panel@; }
+QLabel#planObjectTitle { font-size: 15px; }
+QLabel#planObjectSummary { color: @textDim@; }
+QLabel#planObjectSummary[error="true"] { color: #e06c6c; }
+QLabel#planObjectSection { font-weight: 600; }
 QLineEdit#explorerFilter { background: @editor@; border: 1px solid @border@; border-radius: 4px; padding: 3px 6px; }
 
 QWidget#findBar { background: @panel@; border-bottom: 1px solid @border@; }
@@ -180,6 +187,15 @@ QLabel#findStatus { color: @textDim@; }
 QLabel#findStatus[error="true"] { color: #e06c6c; }
 
 QTableView#historyList { background: @editor@; }
+
+QToolBar#resultToolbar { background: @panel@; border: none; border-bottom: 1px solid @border@; padding: 2px 4px; spacing: 2px; }
+QToolBar#resultToolbar QToolButton { padding: 2px 7px; border-radius: 3px; }
+QToolBar#resultToolbar QToolButton:checked { background: @selection@; color: @selectionText@; }
+QLineEdit#resultFilter { background: @editor@; border: 1px solid @border@; border-radius: 4px; padding: 2px 6px; }
+QLabel#resultRowsLabel { color: @textDim@; padding: 0px 8px; }
+QLabel#importStatus[error="true"] { color: #e06c6c; }
+QLabel#tableDetailSummary { color: @textDim@; }
+QLabel#tableDetailTitle { font-size: 15px; }
 
 QWidget#launcherWindow { background: @panel@; }
 QLabel#launcherTitle { font-size: 22px; font-weight: 600; }
@@ -255,4 +271,19 @@ QColor Theme::searchMatchColor()
 QColor Theme::currentMatchColor()
 {
     return g_current == Kind::Dark ? QColor(0x8a, 0x6a, 0x14) : QColor(0xff, 0xc4, 0x3d);
+}
+
+QColor Theme::editedCellColor()
+{
+    return g_current == Kind::Dark ? QColor(0x55, 0x4a, 0x1c) : QColor(0xff, 0xf0, 0xb3);
+}
+
+QColor Theme::insertedRowColor()
+{
+    return g_current == Kind::Dark ? QColor(0x23, 0x40, 0x2a) : QColor(0xdc, 0xf3, 0xdc);
+}
+
+QColor Theme::deletedRowColor()
+{
+    return g_current == Kind::Dark ? QColor(0x4d, 0x26, 0x28) : QColor(0xfb, 0xdc, 0xdc);
 }

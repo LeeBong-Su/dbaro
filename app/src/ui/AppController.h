@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/ConnectSpec.h"
 #include "core/ConnectionStore.h"
 #include "core/QueryHistory.h"
 #include "core/SqlBinds.h"
@@ -60,7 +61,17 @@ public:
 
     // 비밀번호: 저장한 것 → 앱이 켜져 있는 동안 입력한 것 → (interactive면) 묻기
     bool passwordFor(const ConnectionProfile &profile, QString *password, bool interactive, QWidget *parent = nullptr);
+    // 쿼리 탭이 접속할 때 쓰는 요청. 테스트 도구는 setSpecOverride로 바꿀 수 있다 (내장 DB 등).
+    ConnectSpec connectSpec(const ConnectionProfile &profile, const QString &password, bool autoCommit) const;
+    void setSpecOverride(std::function<void(const ConnectionProfile &, ConnectSpec *)> override)
+    {
+        m_specOverride = std::move(override);
+    }
     void forgetPassword(const QString &connectionId);
+
+    // 연결 창을 열면(탭을 고르면) 바로 접속한다. 테스트 도구는 끌 수 있다.
+    bool autoConnect() const { return m_autoConnect; }
+    void setAutoConnect(bool on) { m_autoConnect = on; }
 
     bool reopenAtStartup() const;
     void setReopenAtStartup(bool on);
@@ -91,5 +102,7 @@ private:
     QHash<QString, QPointer<MainWindow>> m_windows;
     QPointer<LauncherWindow> m_launcher;
     std::function<void(QWidget *)> m_beforeShow;
+    std::function<void(const ConnectionProfile &, ConnectSpec *)> m_specOverride;
     bool m_quitting = false;
+    bool m_autoConnect = true;
 };

@@ -2,10 +2,18 @@
 #include "MetadataService.h"
 
 #include "AppController.h"
+#include "ConnectionBar.h"
+#include "ConsoleTab.h"
+#include "ScriptFoldersDialog.h"
+#include "FontZoom.h"
+#include "cli/CliApp.h"
+#include "PlanObjectWindow.h"
 #include "BindDialog.h"
 #include "EditorTabs.h"
 #include "FindBar.h"
 #include "HistoryDialog.h"
+#include "ImportDialog.h"
+#include "TableDetailTab.h"
 #include "Icons.h"
 #include "ObjectExplorer.h"
 #include "QuerySession.h"
@@ -38,6 +46,7 @@
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QProgressDialog>
 #include <QPainter>
 #include <QRegularExpression>
 #include <QSettings>
@@ -53,6 +62,8 @@
 #include <QToolBar>
 #include <QToolButton>
 #include <QTreeView>
+
+#include <memory>
 
 namespace {
 const auto kGeometryKey = QStringLiteral("mainWindow/geometry");
@@ -157,6 +168,8 @@ MainWindow::MainWindow(AppController *app, const QString &connectionId, QWidget 
         updateConnectionStatus();
         updateActionStates();
         scheduleWorkspaceSave();
+        if (m_shown)
+            connectCurrentTab();
     });
     connect(m_app, &AppController::connectionsChanged, this, &MainWindow::refreshConnection);
 
@@ -222,6 +235,11 @@ void MainWindow::showEvent(QShowEvent *event)
 {
     QMainWindow::showEvent(event);
     applyWindowColor(); // 창 핸들이 생긴 뒤에야 칠할 수 있다
+    if (!m_shown) {
+        m_shown = true;
+        // 창이 그려진 뒤에 접속한다 (비밀번호를 물어야 하면 창 위에 뜬다).
+        QTimer::singleShot(0, this, &MainWindow::connectCurrentTab);
+    }
 }
 
 MainWindow::~MainWindow()
@@ -246,6 +264,39 @@ void MainWindow::createActions()
     m_newTabAction->setShortcut(QKeySequence::AddTab);
     m_newTabAction->setToolTip(withShortcut(tr("New query tab"), m_newTabAction->shortcut()));
     connect(m_newTabAction, &QAction::triggered, this, [this] { addQueryTab(); });
+
+    m_consoleAction = new QAction(Icons::get(QStringLiteral("console")), tr("New CLI Tab"), this);
+    m_consoleAction->setShortcut(QKeySequence(Qt::ALT | Qt::Key_F12));
+    m_consoleAction->setToolTip(withShortcut(tr("New CLI tab: run SQL like dbaro-cli in this window"), m_consoleAction->shortcut()));
+    connect(m_consoleAction, &QAction::triggered, this, [this] { openConsole(); });
+
+    // 탭 옮겨 가기: 에디터·CLI·탐색기 어디에 있든 창 전체에서 쓴다
+    m_nextTabAction = new QAction(tr("Next Tab"), this);
+    m_nextTabAction->setShortcuts({QKeySequence(Qt::CTRL | Qt::Key_Tab), QKeySequence(Qt::CTRL | Qt::Key_PageDown)});
+    connect(m_nextTabAction, &QAction::triggered, this, [this] { selectAdjacentTab(1); });
+    m_previousTabAction = new QAction(tr("Previous Tab"), this);
+    m_previousTabAction->setShortcuts({QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Tab),
+                                       QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Backtab),
+                                       QKeySequence(Qt::CTRL | Qt::Key_PageUp)});
+    connect(m_previousTabAction, &QAction::triggered, this, [this] { selectAdjacentTab(-1); });
+    addAction(m_nextTabAction);
+    addAction(m_previousTabAction);
+
+    // Ctrl + 휠로 글자 크기를 바꾸면 상태 표시줄에 알린다 (지금 쓰는 창만)
+    connect(FontZoom::instance(), &FontZoom::changed, this, [this](FontZoom::Target target, qreal pointSize) {
+        if (!isActiveWindow())
+            return;
+        statusBar()->showMessage(target == FontZoom::Target::Editor ? tr("SQL editor font: %1 pt").arg(pointSize)
+                                                                    : tr("CLI font: %1 pt").arg(pointSize),
+                                 3000);
+    });
+
+    m_scriptFoldersAction = new QAction(tr("Script Folders..."), this);
+    m_scriptFoldersAction->setToolTip(tr("Folders the CLI's @name looks in, one per DBMS"));
+    connect(m_scriptFoldersAction, &QAction::triggered, this, [this] {
+        ScriptFoldersDialog dialog(this, profile() ? profile()->type : DbType::Oracle);
+        dialog.exec();
+    });
 
     m_closeTabAction = new QAction(tr("Close Tab"), this);
     m_closeTabAction->setShortcut(QKeySequence::Close);
@@ -357,6 +408,16 @@ void MainWindow::createActions()
         tr("DDL of the selected table or object, with comments, indexes, synonyms and grants"), m_ddlAction->shortcut()));
     connect(m_ddlAction, &QAction::triggered, this, &MainWindow::showDdlAtCursor);
 
+    m_tableDetailsAction = new QAction(tr("Table Details"), this);
+    m_tableDetailsAction->setShortcut(QKeySequence(Qt::SHIFT | Qt::Key_F4));
+    m_tableDetailsAction->setToolTip(withShortcut(
+        tr("Columns, indexes, foreign keys and DDL of the selected table"), m_tableDetailsAction->shortcut()));
+    connect(m_tableDetailsAction, &QAction::triggered, this, &MainWindow::showTableDetailsAtCursor);
+
+    m_importAction = new QAction(tr("Import Data..."), this);
+    m_importAction->setToolTip(tr("Load an Excel (.xlsx) or CSV file into a table"));
+    connect(m_importAction, &QAction::triggered, this, [this] { importData(QString(), QString()); });
+
     m_cancelAction = new QAction(Icons::get(QStringLiteral("stop")), tr("Cancel"), this);
     m_cancelAction->setToolTip(tr("Cancel the running statement"));
     connect(m_cancelAction, &QAction::triggered, this, [this] {
@@ -410,6 +471,7 @@ void MainWindow::createDocks()
     // 탐색기에는 이 창의 연결만 보인다.
     m_explorer = new ObjectExplorer(m_app->metadata(), this);
     connect(m_explorer, &ObjectExplorer::newQueryRequested, this, [this] { addQueryTab(); });
+    connect(m_explorer, &ObjectExplorer::consoleRequested, this, [this] { openConsole(); });
     connect(m_explorer, &ObjectExplorer::openObjectRequested, this, &MainWindow::openObject);
     connect(m_explorer, &ObjectExplorer::useSchemaRequested, this, &MainWindow::useSchema);
     connect(m_explorer, &ObjectExplorer::ddlRequested, this,
@@ -417,6 +479,10 @@ void MainWindow::createDocks()
                 // 탐색기의 이름은 DB에 저장된 그대로이므로 따옴표로 감싼 것처럼 대소문자를 그대로 쓴다.
                 requestDdl(connectionId, schema, name, true, true, currentQueryTab());
             });
+    connect(m_explorer, &ObjectExplorer::tableDetailsRequested, this,
+            [this](const QString &, const QString &schema, const QString &name) { openTableDetails(schema, name, true, true); });
+    connect(m_explorer, &ObjectExplorer::importRequested, this,
+            [this](const QString &, const QString &schema, const QString &name) { importData(schema, name); });
     connect(m_explorer, &ObjectExplorer::insertTextRequested, this, [this](const QString &text) {
         if (QueryTab *tab = currentQueryTab()) {
             tab->editor()->insertPlainText(text);
@@ -445,6 +511,7 @@ void MainWindow::createMenus()
 {
     QMenu *fileMenu = menuBar()->addMenu(tr("&File"));
     fileMenu->addAction(m_newTabAction);
+    fileMenu->addAction(m_consoleAction);
     fileMenu->addAction(m_openFileAction);
     fileMenu->addSeparator();
     fileMenu->addAction(m_saveAction);
@@ -467,6 +534,8 @@ void MainWindow::createMenus()
     databaseMenu->addAction(m_manageConnectionsAction);
     databaseMenu->addAction(m_newConnectionAction);
     databaseMenu->addAction(m_editConnectionAction);
+    databaseMenu->addSeparator();
+    databaseMenu->addAction(m_scriptFoldersAction);
 
     QMenu *queryMenu = menuBar()->addMenu(tr("&Query"));
     queryMenu->addAction(m_executeAction);
@@ -475,6 +544,8 @@ void MainWindow::createMenus()
     queryMenu->addAction(m_ddlAction);
     queryMenu->addAction(m_historyAction);
     queryMenu->addAction(m_exportAction);
+    queryMenu->addAction(m_importAction);
+    queryMenu->addAction(m_tableDetailsAction);
     queryMenu->addAction(m_cancelAction);
     queryMenu->addSeparator();
     queryMenu->addAction(m_commitAction);
@@ -483,6 +554,9 @@ void MainWindow::createMenus()
 
     QMenu *viewMenu = menuBar()->addMenu(tr("&View"));
     viewMenu->addAction(m_explorerDock->toggleViewAction());
+    viewMenu->addSeparator();
+    viewMenu->addAction(m_nextTabAction);
+    viewMenu->addAction(m_previousTabAction);
     viewMenu->addSeparator();
     QMenu *themeMenu = viewMenu->addMenu(tr("Theme"));
     themeMenu->addAction(m_darkThemeAction);
@@ -505,6 +579,7 @@ void MainWindow::createToolBar()
     // 왼쪽: 다른 연결(새 창)과 새 탭
     toolBar->addAction(m_manageConnectionsAction);
     toolBar->addAction(m_newTabAction);
+    toolBar->addAction(m_consoleAction);
 
     // 가운데 여백: 실행 관련 버튼을 오른쪽 끝으로 민다
     auto *spacer = new QWidget(toolBar);
@@ -579,6 +654,8 @@ void MainWindow::closeEvent(QCloseEvent *event)
     int pending = 0;
     for (QueryTab *tab : queryTabs())
         pending += tab->session()->hasPendingTransaction() ? 1 : 0;
+    for (ConsoleTab *console : findChildren<ConsoleTab *>())
+        pending += console->hasPendingTransaction() ? 1 : 0;
     if (pending > 0) {
         const auto answer = QMessageBox::warning(
             this, tr("Uncommitted Changes"),
@@ -628,6 +705,7 @@ void MainWindow::saveWorkspace()
             saved.sql = tab->editor()->toPlainText();
         saved.cursor = tab->editor()->textCursor().position();
         saved.ddlKey = tab->property("dbaroDdlKey").toString();
+        saved.schema = tab->preferredSchema();
         workspace.tabs.append(saved);
     }
     workspace.current = m_tabs->currentIndex();
@@ -668,6 +746,7 @@ bool MainWindow::restoreWorkspace()
         }
         if (!saved.ddlKey.isEmpty())
             tab->setProperty("dbaroDdlKey", saved.ddlKey);
+        tab->setPreferredSchema(saved.schema);
         tab->editor()->setPlainText(text);
         tab->editor()->document()->setModified(saved.modified);
         QTextCursor cursor = tab->editor()->textCursor();
@@ -848,6 +927,47 @@ QList<QueryTab *> MainWindow::queryTabs() const
     return tabs;
 }
 
+ConsoleTab *MainWindow::openConsole()
+{
+    const ConnectionProfile *profile = this->profile();
+    if (!profile)
+        return nullptr;
+    QString password;
+    if (!m_app->passwordFor(*profile, &password, true, this))
+        return nullptr;
+    ConnectSpec spec = m_app->connectSpec(*profile, password, m_autoCommitAction->isChecked());
+    if (QueryTab *current = currentQueryTab())
+        spec.schema = current->currentSchema(); // 보고 있던 탭의 스키마에서 이어서
+
+    auto *console = new ConsoleTab(m_app->engine(), *profile, m_tabs);
+    // 실행 기록은 F8 목록에 바로 보이게 앱의 기록에 넣고, 위험한 문장은 쿼리 탭처럼 묻는다
+    console->cli()->setHistorySink([this](const HistoryEntry &entry) { m_app->history().add(entry); });
+    QPointer<ConsoleTab> guard(console);
+    console->cli()->setConfirm([this](const QString &question) {
+        return QMessageBox::warning(this, tr("CLI"), question, QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel)
+               == QMessageBox::Yes;
+    });
+    connect(console, &ConsoleTab::closeRequested, this, [this, guard] {
+        if (guard)
+            closeQueryTab(m_tabs->indexOf(guard));
+    });
+    connect(console, &ConsoleTab::stateChanged, this, [this, guard] {
+        if (guard && m_tabs->currentWidget() == guard)
+            updateConnectionStatus();
+    });
+
+    int number = 1;
+    for (ConsoleTab *other : findChildren<ConsoleTab *>())
+        number += other != console ? 1 : 0;
+    const QString title = number == 1 ? tr("CLI") : tr("CLI %1").arg(number);
+    const int index = m_tabs->addTab(console, Icons::get(QStringLiteral("console")), title);
+    m_tabs->setTabToolTip(index, tr("CLI on %1 (same commands as dbaro-cli, \\help)").arg(profile->name));
+    m_tabs->setCurrentIndex(index);
+    console->start(spec);
+    console->focusInput();
+    return console;
+}
+
 QueryTab *MainWindow::addQueryTab()
 {
     // 탭은 모두 이 창의 연결을 쓴다 (세션은 탭마다 따로 연다).
@@ -865,6 +985,16 @@ QueryTab *MainWindow::addQueryTab()
         }
     });
     connect(tab->editor(), &QPlainTextEdit::textChanged, this, &MainWindow::scheduleWorkspaceSave);
+    connect(tab->editor(), &SqlEditor::wordMarksChanged, this, [this](const QString &word, int count) {
+        if (word.isEmpty())
+            statusBar()->clearMessage();
+        else
+            statusBar()->showMessage(count == 1 ? tr("%1: 1 occurrence").arg(word)
+                                                : tr("%1: %2 occurrences").arg(word).arg(count));
+    });
+    connect(tab, &QueryTab::schemaSwitchRequested, this, [this, tab](const QString &schema) { switchSchema(tab, schema); });
+    connect(tab->resultPanel(), &ResultPanel::planObjectRequested, this,
+            [this, tab](const QCborMap &object) { showPlanObject(tab, object); });
     connect(tab->resultPanel(), &ResultPanel::exportFinished, this,
             [this](const QString &message) { statusBar()->showMessage(message, 10000); });
     connect(tab->session(), &QuerySession::statementFinished, this,
@@ -913,12 +1043,47 @@ void MainWindow::openObject(const QString &connectionId, const QString &schema, 
     executeCurrent(false);
 }
 
+void MainWindow::selectAdjacentTab(int step)
+{
+    const int count = m_tabs->count();
+    if (count < 2)
+        return;
+    m_tabs->setCurrentIndex((m_tabs->currentIndex() + step + count) % count);
+    // 옮겨 간 탭에서 바로 입력할 수 있게
+    QWidget *widget = m_tabs->currentWidget();
+    if (auto *tab = qobject_cast<QueryTab *>(widget))
+        tab->editor()->setFocus(Qt::TabFocusReason);
+    else if (auto *console = qobject_cast<ConsoleTab *>(widget))
+        console->focusInput();
+    else if (widget)
+        widget->setFocus(Qt::TabFocusReason);
+}
+
 void MainWindow::closeQueryTab(int index)
 {
-    auto *tab = qobject_cast<QueryTab *>(m_tabs->widget(index));
-    if (!tab)
+    QWidget *widget = m_tabs->widget(index);
+    auto *tab = qobject_cast<QueryTab *>(widget);
+    if (!tab) {
+        if (auto *console = qobject_cast<ConsoleTab *>(widget); console && console->hasPendingTransaction()) {
+            const auto answer = QMessageBox::warning(
+                this, tr("Uncommitted Changes"),
+                tr("This CLI tab has uncommitted changes. They will be rolled back if you close this tab."),
+                QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Cancel);
+            if (answer != QMessageBox::Discard)
+                return;
+        }
+        if (widget) { // 테이블 상세 탭, CLI 탭 같은 쿼리 탭이 아닌 탭
+            m_tabs->removeTab(index);
+            widget->deleteLater();
+        }
         return;
+    }
     if (!confirmCloseUnsaved(tab) || !confirmDiscardTransaction(tab, tr("close this tab")))
+        return;
+    if (tab->resultPanel()->hasPendingEdits()
+        && QMessageBox::question(this, tr("Close Tab"), tr("The result has changes that are not applied. Discard them?"),
+                                 QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Cancel)
+               != QMessageBox::Discard)
         return;
     m_tabs->removeTab(index);
     tab->deleteLater(); // 세션은 탭과 함께 연결을 끊는다 (커밋 안 된 변경은 롤백)
@@ -932,7 +1097,7 @@ void MainWindow::executeCurrent(bool wholeScript)
         return;
     QuerySession *session = tab->session();
     ResultPanel *results = tab->resultPanel();
-    if (session->isBusy() || session->isConnecting())
+    if (session->isBusy())
         return;
 
     QList<SqlStatement> statements = tab->editor()->statementsToExecute(wholeScript);
@@ -944,6 +1109,15 @@ void MainWindow::executeCurrent(bool wholeScript)
 
     if (!requireConnection(tab) || !applyBindVariables(tab, &statements) || !confirmSafeToRun(tab, statements))
         return;
+    // 결과를 고치던 중이면 새 결과가 덮기 전에 묻는다
+    if (results->hasPendingEdits()) {
+        const auto answer = QMessageBox::question(
+            this, tr("Edit Result"), tr("The result has changes that are not applied. Discard them and run?"),
+            QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Cancel);
+        if (answer != QMessageBox::Discard)
+            return;
+        results->discardEdits();
+    }
 
     if (statements.size() > 1)
         results->appendLog(tr("Running %n statement(s) ...", nullptr, int(statements.size())));
@@ -958,7 +1132,7 @@ void MainWindow::executeCurrent(bool wholeScript)
 void MainWindow::explainCurrent()
 {
     QueryTab *tab = currentQueryTab();
-    if (!tab || tab->session()->isBusy() || tab->session()->isConnecting())
+    if (!tab || tab->session()->isBusy())
         return;
     ResultPanel *results = tab->resultPanel();
 
@@ -1122,23 +1296,38 @@ void MainWindow::insertSql(QueryTab *tab, const QString &sql)
 
 void MainWindow::useSchema(const QString &connectionId, const QString &schema)
 {
-    // MySQL·MariaDB: 지금 탭(없으면 새 탭)에서 USE를 실행해 스키마 이름 없이 조회하게 한다.
+    // 지금 탭(없으면 새 탭)의 스키마를 바꿔 스키마 이름 없이 조회하게 한다.
     if (connectionId != m_connectionId)
         return;
-    QueryTab *tab = currentQueryTab() ? currentQueryTab() : addQueryTab();
-    if (tab->session()->isBusy() || tab->session()->isConnecting()) {
-        tab->resultPanel()->appendLog(tr("The tab is busy. Try USE again when the current statement finishes."), true);
+    switchSchema(currentQueryTab() ? currentQueryTab() : addQueryTab(), schema);
+}
+
+void MainWindow::switchSchema(QueryTab *tab, const QString &schema)
+{
+    if (!tab || schema.isEmpty())
+        return;
+    if (tab->session()->isBusy()) {
+        tab->resultPanel()->appendLog(tr("The tab is busy. Change the schema when the current statement finishes."), true);
         tab->resultPanel()->showLog();
+        tab->connectionBar()->setSchema(tab->currentSchema()); // 목록에서 고른 것을 되돌린다
         return;
     }
-
-    SqlStatement statement;
-    statement.start = -1; // 에디터에 없는 문장
-    statement.text = QStringLiteral("USE %1").arg(SqlIdentifiers::quote(schema, SqlDialect::MySql));
-    QPointer<QuerySession> guard(tab->session());
-    withConnectedSession(tab, [guard, statement] {
-        if (guard)
-            guard->run({statement});
+    QPointer<QueryTab> guard(tab);
+    withConnectedSession(tab, [this, guard, schema] {
+        if (!guard)
+            return;
+        guard->session()->setSchema(schema, [this, guard](bool ok) {
+            if (!guard)
+                return;
+            if (!ok) {
+                guard->connectionBar()->setSchema(guard->currentSchema());
+                guard->resultPanel()->showLog();
+                return;
+            }
+            guard->setPreferredSchema(guard->currentSchema()); // 다시 접속해도 이 스키마로
+            scheduleWorkspaceSave();
+            statusBar()->showMessage(tr("Current schema: %1").arg(guard->currentSchema()), 5000);
+        });
     });
 }
 
@@ -1162,13 +1351,185 @@ void MainWindow::showDdlAtCursor()
         tab->resultPanel()->showLog();
         return;
     }
-    QString schema = name->schema;
-    bool schemaQuoted = name->schemaQuoted;
-    if (schema.isEmpty() && tab->dialect() == SqlDialect::MySql && !tab->currentSchema().isEmpty()) {
-        schema = tab->currentSchema(); // 이 탭에서 USE한 데이터베이스
-        schemaQuoted = true;
+    // 스키마 없이 쓴 이름은 이 탭의 지금 스키마에서 찾는다 (requestDdl이 source 탭에서 가져간다)
+    requestDdl(tab->connectionId(), name->schema, name->name, name->schemaQuoted, name->nameQuoted, tab);
+}
+
+void MainWindow::showTableDetailsAtCursor()
+{
+    QString explorerConnection, explorerSchema, explorerName;
+    if (m_explorer->tree()->hasFocus() && m_explorer->selectedObject(&explorerConnection, &explorerSchema, &explorerName)) {
+        openTableDetails(explorerSchema, explorerName, true, true);
+        return;
     }
-    requestDdl(tab->connectionId(), schema, name->name, schemaQuoted, name->nameQuoted, tab);
+    QueryTab *tab = currentQueryTab();
+    if (!tab)
+        return;
+    const std::optional<QualifiedName> name = SqlIdentifiers::parseQualified(tab->editor()->objectNameAtCursor());
+    if (!name) {
+        tab->resultPanel()->appendLog(tr("Select a table name in the editor, then press Shift+F4."), true);
+        tab->resultPanel()->showLog();
+        return;
+    }
+    openTableDetails(name->schema, name->name, name->schemaQuoted, name->nameQuoted, tab->currentSchema());
+}
+
+void MainWindow::openTableDetails(const QString &schema, const QString &name, bool schemaQuoted, bool nameQuoted,
+                                  const QString &currentSchema)
+{
+    if (!profile())
+        return;
+    const QString key = (schema.isEmpty() ? QString() : schema + u'.') + name;
+    for (int i = 0; i < m_tabs->count(); ++i) {
+        if (auto *existing = qobject_cast<TableDetailTab *>(m_tabs->widget(i));
+            existing && existing->property("dbaroDetailKey").toString().compare(key, Qt::CaseInsensitive) == 0) {
+            m_tabs->setCurrentIndex(i);
+            existing->refresh();
+            return;
+        }
+    }
+    auto *detail = new TableDetailTab(m_app->metadata(), m_connectionId, schema, name, schemaQuoted, nameQuoted,
+                                      sqlDialectFor(profile()->type), m_tabs, currentSchema);
+    detail->setProperty("dbaroDetailKey", key);
+    const int index = m_tabs->addTab(detail, Icons::get(QStringLiteral("table")), name);
+    m_tabs->setTabToolTip(index, tr("Table details: %1").arg(key));
+    m_tabs->setCurrentIndex(index);
+    connect(detail, &TableDetailTab::loaded, this, [this, detail](const QString &title) {
+        const int at = m_tabs->indexOf(detail);
+        if (at >= 0) {
+            m_tabs->setTabText(at, title);
+            detail->setProperty("dbaroDetailKey", detail->schema() + u'.' + detail->name());
+        }
+    });
+    connect(detail, &TableDetailTab::selectRowsRequested, this,
+            [this](const QString &s, const QString &n) { openObject(m_connectionId, s, n); });
+    connect(detail, &TableDetailTab::importRequested, this, &MainWindow::importData);
+}
+
+void MainWindow::importData(const QString &schema, const QString &table)
+{
+    const ConnectionProfile *p = profile();
+    if (!p)
+        return;
+    ImportDialog dialog(m_app->metadata(), m_connectionId, sqlDialectFor(p->type), schema, table, this);
+    if (dialog.exec() != QDialog::Accepted)
+        return;
+    const QStringList statements = dialog.statements();
+    if (statements.isEmpty())
+        return;
+    if (dialog.openAsSql()) {
+        // 바로 실행하지 않고 새 탭에서 고쳐 실행할 수 있게
+        QueryTab *sqlTab = addQueryTab();
+        sqlTab->editor()->setPlainText(statements.join(QStringLiteral(";\n")) + u';');
+        sqlTab->editor()->moveCursor(QTextCursor::Start);
+        return;
+    }
+    QueryTab *tab = currentQueryTab() ? currentQueryTab() : addQueryTab();
+    runImport(tab, statements, dialog.stopOnError(), dialog.targetDisplay());
+}
+
+void MainWindow::runImport(QueryTab *tab, const QStringList &statements, bool stopOnError, const QString &target)
+{
+    if (tab->session()->isBusy()) {
+        QMessageBox::information(this, tr("Import Data"), tr("The tab is busy. Try again when the current statement finishes."));
+        return;
+    }
+    QPointer<QueryTab> guard(tab);
+    withConnectedSession(tab, [this, guard, statements, stopOnError, target] {
+        if (!guard)
+            return;
+        // 500문장씩 엔진에 보낸다. 진행 상황을 보여 주고 취소할 수 있다.
+        struct State
+        {
+            int next = 0;
+            qint64 executed = 0;
+            qint64 failed = 0;
+            QStringList errors;
+            bool cancelled = false;
+        };
+        auto state = std::make_shared<State>();
+        auto *progress = new QProgressDialog(tr("Importing into %1 ...").arg(target), tr("Cancel"), 0, int(statements.size()), this);
+        progress->setObjectName(QStringLiteral("importProgress"));
+        progress->setWindowTitle(tr("Import Data"));
+        progress->setWindowModality(Qt::WindowModal);
+        progress->setMinimumDuration(300);
+        progress->setAutoClose(false);
+        progress->setAutoReset(false);
+        connect(progress, &QProgressDialog::canceled, this, [guard, state] {
+            state->cancelled = true;
+            if (guard)
+                guard->session()->cancel(); // 엔진은 다음 문장 앞에서 멈춘다
+        });
+        guard->resultPanel()->appendLog(tr("Importing %n statement(s) into %1 ...", nullptr, int(statements.size())).arg(target));
+
+        auto finish = [this, guard, state, progress, target, total = int(statements.size())] {
+            progress->close();
+            progress->deleteLater();
+            if (!guard)
+                return;
+            m_app->metadata()->invalidate(m_connectionId); // 새 테이블·행이 자동완성·탐색기에 보이게
+            QString message = tr("Import into %1: %2 of %3 statement(s) ran").arg(target).arg(state->executed).arg(total);
+            if (state->failed > 0)
+                message += tr(", %n failed", nullptr, int(state->failed));
+            if (state->cancelled)
+                message += tr(", cancelled");
+            guard->resultPanel()->appendLog(message + u'.', state->failed > 0);
+            for (const QString &error : std::as_const(state->errors))
+                guard->resultPanel()->appendLog(error, true);
+            guard->resultPanel()->showLog();
+            statusBar()->showMessage(message, 10000);
+            if (state->executed > 0 && guard->session()->hasPendingTransaction()) {
+                const auto answer = QMessageBox::question(
+                    this, tr("Import Data"),
+                    tr("%1.\n\nCommit now? (Rollback undoes the rows inserted in this tab.)").arg(message),
+                    QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
+                if (answer == QMessageBox::Yes)
+                    guard->session()->commit();
+            } else if (state->failed > 0) {
+                QMessageBox::warning(this, tr("Import Data"),
+                                     message + u'.' + u'\n' + state->errors.mid(0, 5).join(u'\n'));
+            }
+        };
+
+        auto step = std::make_shared<std::function<void()>>();
+        *step = [this, guard, state, statements, stopOnError, progress, finish, step] {
+            if (!guard)
+                return;
+            constexpr int kChunk = 500;
+            if (state->next >= statements.size() || state->cancelled || (stopOnError && state->failed > 0)) {
+                finish();
+                return;
+            }
+            const QStringList chunk = statements.mid(state->next, kChunk);
+            const int offset = state->next;
+            guard->session()->executeBatch(chunk, stopOnError, [guard, state, chunk, offset, progress, step, finish](
+                                                                   const QCborMap &result, const EngineError &error) {
+                if (!guard)
+                    return;
+                if (error.isError()) {
+                    state->failed += chunk.size();
+                    state->errors << error.message;
+                    finish();
+                    return;
+                }
+                state->executed += result.value(QStringLiteral("executed")).toInteger();
+                state->failed += result.value(QStringLiteral("failed")).toInteger();
+                if (result.value(QStringLiteral("cancelled")).toBool())
+                    state->cancelled = true;
+                for (const QCborValue &item : result.value(QStringLiteral("errors")).toArray()) {
+                    const QCborMap e = item.toMap();
+                    if (state->errors.size() < 20)
+                        state->errors << QObject::tr("Row %1: %2")
+                                             .arg(offset + e.value(QStringLiteral("index")).toInteger() + 1)
+                                             .arg(e.value(QStringLiteral("message")).toString());
+                }
+                state->next = offset + int(chunk.size());
+                progress->setValue(state->next);
+                (*step)();
+            });
+        };
+        (*step)();
+    });
 }
 
 void MainWindow::requestDdl(const QString &connectionId, const QString &schema, const QString &name, bool schemaQuoted,
@@ -1182,6 +1543,9 @@ void MainWindow::requestDdl(const QString &connectionId, const QString &schema, 
     params.insert(QStringLiteral("name"), name);
     params.insert(QStringLiteral("schemaQuoted"), schemaQuoted);
     params.insert(QStringLiteral("nameQuoted"), nameQuoted);
+    // 메타데이터 세션은 탭이 바꾼 스키마를 모르므로, 스키마 없이 쓴 이름을 찾을 스키마를 함께 보낸다.
+    if (schema.isEmpty() && source && !source->currentSchema().isEmpty())
+        params.insert(QStringLiteral("currentSchema"), source->currentSchema());
 
     const QString display = schema.isEmpty() ? name : schema + u'.' + name;
     statusBar()->showMessage(tr("Generating DDL for %1 ...").arg(display));
@@ -1199,6 +1563,55 @@ void MainWindow::requestDdl(const QString &connectionId, const QString &schema, 
                 return;
             }
             openDdlTab(connectionId, result);
+        },
+        true, true);
+}
+
+void MainWindow::showPlanObject(QueryTab *tab, const QCborMap &object)
+{
+    if (!profile())
+        return;
+    if (!m_planObjectWindow) {
+        m_planObjectWindow = new PlanObjectWindow(this);
+        connect(m_planObjectWindow, &PlanObjectWindow::tableDetailsRequested, this,
+                [this](const QString &schema, const QString &name) {
+                    openTableDetails(schema, name, true, true);
+                    activateWindow();
+                });
+    }
+    QCborMap params;
+    for (const QString &key : {QStringLiteral("schema"), QStringLiteral("name"), QStringLiteral("type"), QStringLiteral("index")}) {
+        const QString value = object.value(key).toString();
+        if (!value.isEmpty())
+            params.insert(key, value);
+    }
+    // 메타데이터 세션은 탭이 바꾼 스키마를 모르므로 함께 보낸다 (계획에 스키마가 없을 때: PostgreSQL, MySQL)
+    if (tab && !tab->currentSchema().isEmpty())
+        params.insert(QStringLiteral("currentSchema"), tab->currentSchema());
+
+    const QString schema = object.value(QStringLiteral("schema")).toString();
+    const QString name = object.value(QStringLiteral("name")).toString();
+    const QString display = schema.isEmpty() ? name : schema + u'.' + name;
+    PlanObjectWindow *window = m_planObjectWindow;
+    const int ticket = window->beginLoading(display);
+    if (!window->isVisible()) {
+        // 처음에는 연결 창 오른쪽 위에 겹쳐 놓는다
+        const QRect area = geometry();
+        window->move(area.right() - window->width() - 40, area.top() + 80);
+    }
+    window->show();
+    window->raise();
+
+    QPointer<PlanObjectWindow> guard(window);
+    m_app->metadata()->request(
+        m_connectionId, QStringLiteral("planObject"), params,
+        [guard, ticket](const QCborMap &result, const QString &error) {
+            if (!guard)
+                return;
+            if (error.isEmpty())
+                guard->showResult(ticket, result);
+            else
+                guard->showError(ticket, error);
         },
         true, true);
 }
@@ -1245,21 +1658,31 @@ bool MainWindow::requireConnection(QueryTab *tab)
 void MainWindow::withConnectedSession(QueryTab *tab, std::function<void()> work)
 {
     QuerySession *session = tab->session();
-    if (session->isBusy() || session->isConnecting())
+    if (session->isBusy())
         return;
     const ConnectionProfile *profile = this->profile();
     if (!profile)
         return;
+    if (session->isConnecting()) {
+        // 창을 열 때 시작한 접속이 아직 끝나지 않았다: 끝나면 이어서 한다.
+        session->whenConnected([work](bool ok) {
+            if (ok)
+                work();
+        });
+        return;
+    }
     if (session->isConnected() && session->profileId() == profile->id) {
         work();
         return;
     }
+    m_autoConnectBlocked = false; // 사용자가 직접 실행했다: 이제 다른 탭도 다시 저절로 접속해 본다
 
     QString password;
     if (!m_app->passwordFor(*profile, &password, true, this))
         return;
     const QString profileId = profile->id;
-    const ConnectSpec spec = ConnectSpec::fromProfile(*profile, password, m_autoCommitAction->isChecked());
+    ConnectSpec spec = m_app->connectSpec(*profile, password, m_autoCommitAction->isChecked());
+    spec.schema = tab->preferredSchema(); // 이 탭에서 고른 스키마로 다시 바꾼다
     QPointer<QuerySession> guard(session);
     session->connectTo(spec, profileId, [this, guard, work, profileId](bool ok) {
         if (!guard)
@@ -1270,6 +1693,35 @@ void MainWindow::withConnectedSession(QueryTab *tab, std::function<void()> work)
         }
         work();
     });
+}
+
+void MainWindow::connectCurrentTab()
+{
+    QueryTab *tab = currentQueryTab();
+    if (!tab || m_autoConnectBlocked || !m_app->autoConnect() || !isVisible())
+        return;
+    QuerySession *session = tab->session();
+    if (session->isConnected() || session->isConnecting() || session->isBusy())
+        return;
+    const ConnectionProfile *profile = this->profile();
+    if (!profile)
+        return;
+
+    QString password;
+    if (!m_app->passwordFor(*profile, &password, true, this)) {
+        m_autoConnectBlocked = true; // 묻는 창을 닫았다: 실행할 때 다시 묻는다
+        return;
+    }
+    const QString profileId = profile->id;
+    ConnectSpec spec = m_app->connectSpec(*profile, password, m_autoCommitAction->isChecked());
+    spec.schema = tab->preferredSchema(); // 이 탭에서 고른 스키마로 다시 바꾼다
+    session->connectTo(spec, profileId, [this, profileId](bool ok) {
+        if (ok)
+            return;
+        m_app->forgetPassword(profileId);
+        m_autoConnectBlocked = true; // 서버가 꺼져 있으면 탭을 고를 때마다 실패하지 않게
+    });
+    m_explorer->expandConnection(profileId); // 같은 비밀번호로 스키마 목록도 바로 가져온다
 }
 
 bool MainWindow::confirmSafeToRun(QueryTab *tab, const QList<SqlStatement> &statements)
@@ -1327,7 +1779,12 @@ void MainWindow::updateConnectionStatus()
 
     const QuerySession *session = tab ? tab->session() : nullptr;
     QString state;
-    if (!session)
+    if (auto *console = qobject_cast<ConsoleTab *>(m_tabs->currentWidget())) {
+        state = console->isBusy() ? (console->isConnected() ? tr("CLI, running...") : tr("CLI, connecting..."))
+                                  : (console->isConnected() ? tr("CLI, connected") : tr("CLI, not connected"));
+        if (console->hasPendingTransaction())
+            state += tr(" · uncommitted changes");
+    } else if (!session)
         state = tr("no tab");
     else if (session->isConnecting())
         state = tr("connecting...");
@@ -1350,7 +1807,7 @@ void MainWindow::updateActionStates()
 {
     const QueryTab *tab = currentQueryTab();
     const QuerySession *session = tab ? tab->session() : nullptr;
-    const bool busy = session && (session->isBusy() || session->isConnecting());
+    const bool busy = session && session->isBusy(); // 접속 중에 실행하면 접속이 끝난 뒤 실행한다
     const bool connected = session && session->isConnected();
     const bool manual = !m_autoCommitAction->isChecked();
 

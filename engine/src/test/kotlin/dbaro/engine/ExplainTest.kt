@@ -30,6 +30,8 @@ class ExplainTest {
         assertEquals(listOf(-1L, 0L, 1L), nodes.map { it["parent"] })
         assertEquals(listOf("TABLE ACCESS BY INDEX ROWID", "HR.EMPLOYEES", "1", "39", "3", "01:02:05", ""), nodes[1]["cells"])
         assertEquals("access(\"EMPLOYEE_ID\"=100)", (nodes[2]["cells"] as List<*>).last())
+        assertEquals(mapOf("schema" to "HR", "name" to "EMPLOYEES", "type" to "TABLE"), nodes[1]["object"])
+        assertEquals("INDEX", (nodes[2]["object"] as Map<*, *>)["type"])
         assertEquals("Plan hash value: 1", plan["text"])
     }
 
@@ -55,6 +57,8 @@ class ExplainTest {
         assertEquals(listOf("Hash Join (Left)", "", "120", "44", "1.50..35.25", "Hash Cond: (e.dept_id = d.id)"), nodes[0]["cells"])
         assertEquals(listOf("Seq Scan", "public.employees e", "120", "40", "0.00..22.00", "Filter: (salary > 1000::numeric)"), nodes[1]["cells"])
         assertEquals("departments using departments_pkey", (nodes[2]["cells"] as List<*>)[1])
+        assertEquals("departments_pkey", (nodes[2]["object"] as Map<*, *>)["index"])
+        assertEquals(null, nodes[0]["object"])
         assertEquals("Sort Key: d.name, d.id", (nodes[2]["cells"] as List<*>)[5])
         assertEquals(listOf(-1L, 0L, 0L), nodes.map { it["parent"] })
     }

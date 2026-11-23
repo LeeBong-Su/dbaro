@@ -30,7 +30,7 @@ AppController::AppController(QObject *parent)
         QString password;
         if (!passwordFor(profile, &password, interactive, QApplication::activeWindow()))
             return false;
-        *spec = ConnectSpec::fromProfile(profile, password, true);
+        *spec = connectSpec(profile, password, true);
         return true;
     });
     loadConnections();
@@ -350,6 +350,14 @@ bool AppController::passwordFor(const ConnectionProfile &profile, QString *passw
     m_sessionPasswords.insert(profile.id, entered);
     *password = entered;
     return true;
+}
+
+ConnectSpec AppController::connectSpec(const ConnectionProfile &profile, const QString &password, bool autoCommit) const
+{
+    ConnectSpec spec = ConnectSpec::fromProfile(profile, password, autoCommit);
+    if (m_specOverride)
+        m_specOverride(profile, &spec);
+    return spec;
 }
 
 void AppController::forgetPassword(const QString &connectionId)

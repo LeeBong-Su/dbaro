@@ -17,6 +17,7 @@ struct WorkspaceTab
     bool modified = false;   // 파일 탭에서 저장하지 않은 변경이 있다
     TextFileFormat format;
     QString ddlKey;
+    QString schema; // 탭에서 고른 스키마 (다시 접속할 때 적용)
 };
 
 // 연결 창 하나의 탭들

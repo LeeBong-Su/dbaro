@@ -19,7 +19,9 @@ class QLabel;
 class QTabWidget;
 class QTimer;
 class QToolButton;
+class ConsoleTab;
 class ObjectExplorer;
+class PlanObjectWindow;
 class QueryTab;
 struct SqlStatement;
 
@@ -80,7 +82,10 @@ private:
     QueryTab *currentQueryTab() const;
     QList<QueryTab *> queryTabs() const;
     QueryTab *addQueryTab();
+    // CLI 탭 (dbaro-cli 대화형을 창 안에서). 지금 쿼리 탭의 스키마로 시작한다.
+    ConsoleTab *openConsole();
     void closeQueryTab(int index);
+    void selectAdjacentTab(int step); // 다음(+1)·이전(-1) 탭. 끝에서는 반대쪽 끝으로
     void openObject(const QString &connectionId, const QString &schema, const QString &name);
 
     void executeCurrent(bool wholeScript);
@@ -89,13 +94,25 @@ private:
     void insertSql(QueryTab *tab, const QString &sql);
     void formatCurrent(); // 선택 영역(없으면 커서가 있는 문장)을 정렬한다
     void explainCurrent();
-    void useSchema(const QString &connectionId, const QString &schema);
+    void useSchema(const QString &connectionId, const QString &schema); // 탐색기에서: 지금 탭의 스키마를 바꾼다
+    void switchSchema(QueryTab *tab, const QString &schema);
     void showDdlAtCursor();
+    void showTableDetailsAtCursor();
+    void openTableDetails(const QString &schema, const QString &name, bool schemaQuoted, bool nameQuoted,
+                          const QString &currentSchema = {});
+    // 엑셀·CSV 불러오기. table이 비면 새 테이블
+    void importData(const QString &schema, const QString &table);
+    void runImport(QueryTab *tab, const QStringList &statements, bool stopOnError, const QString &target);
     void requestDdl(const QString &connectionId, const QString &schema, const QString &name, bool schemaQuoted,
                     bool nameQuoted, QueryTab *source);
     void openDdlTab(const QString &connectionId, const QCborMap &result);
+    // 실행 계획 단계가 읽는 객체(테이블·인덱스) 정보를 별도 창에 (창은 하나를 계속 쓴다)
+    void showPlanObject(QueryTab *tab, const QCborMap &object);
     // 탭의 세션을 이 창의 연결에 붙인 뒤(필요하면 비밀번호를 묻고 접속) work를 부른다.
     void withConnectedSession(QueryTab *tab, std::function<void()> work);
+    // 창을 열거나 탭을 고르면 그 탭을 바로 접속한다 (탐색기도 펼친다). 비밀번호 입력을 취소했거나
+    // 접속에 실패하면 다시 실행할 때까지 저절로 접속하지 않는다.
+    void connectCurrentTab();
     bool requireConnection(QueryTab *tab);
     bool confirmSafeToRun(QueryTab *tab, const QList<SqlStatement> &statements);
     bool confirmDiscardTransaction(QueryTab *tab, const QString &action);
@@ -115,14 +132,21 @@ private:
     bool m_hasSavedGeometry = false;
     QTimer *m_workspaceTimer = nullptr;
     bool m_restoringWorkspace = false;
+    bool m_shown = false;              // 한 번이라도 화면에 나왔는지 (그 뒤부터 탭을 고르면 바로 접속)
+    bool m_autoConnectBlocked = false; // 비밀번호 입력 취소·접속 실패 뒤에는 저절로 접속하지 않는다
 
     QTabWidget *m_tabs = nullptr;
     QDockWidget *m_explorerDock = nullptr;
     ObjectExplorer *m_explorer = nullptr;
+    QPointer<PlanObjectWindow> m_planObjectWindow;
     QToolButton *m_transactionButton = nullptr;
 
     QAction *m_newTabAction = nullptr;
+    QAction *m_consoleAction = nullptr;
+    QAction *m_scriptFoldersAction = nullptr;
     QAction *m_closeTabAction = nullptr;
+    QAction *m_nextTabAction = nullptr;
+    QAction *m_previousTabAction = nullptr;
     QAction *m_openFileAction = nullptr;
     QAction *m_saveAction = nullptr;
     QAction *m_saveAsAction = nullptr;
@@ -142,6 +166,8 @@ private:
     QAction *m_executeScriptAction = nullptr;
     QAction *m_explainAction = nullptr;
     QAction *m_ddlAction = nullptr;
+    QAction *m_tableDetailsAction = nullptr;
+    QAction *m_importAction = nullptr;
     QAction *m_cancelAction = nullptr;
     QAction *m_commitAction = nullptr;
     QAction *m_rollbackAction = nullptr;

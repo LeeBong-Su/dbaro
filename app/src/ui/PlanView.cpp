@@ -9,6 +9,7 @@
 #include <QHash>
 #include <QHeaderView>
 #include <QLabel>
+#include <QMenu>
 #include <QPlainTextEdit>
 #include <QStackedWidget>
 #include <QStandardItemModel>
@@ -17,6 +18,8 @@
 #include <QVBoxLayout>
 
 namespace {
+
+constexpr int kObjectRole = Qt::UserRole + 1; // 줄 첫 칸: 단계가 읽는 객체 (QCborMap)
 
 // 숫자 컬럼은 오른쪽 정렬
 bool isNumericColumn(const QString &name)
@@ -59,6 +62,18 @@ PlanView::PlanView(QWidget *parent)
     m_tree->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_tree->header()->setStretchLastSection(true);
     m_tree->header()->setDefaultAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    // 오퍼레이션을 누르면 그 단계가 읽는 테이블·인덱스 정보를 별도 창으로
+    connect(m_tree, &QTreeView::clicked, this, &PlanView::requestObject);
+    connect(m_tree, &QTreeView::activated, this, &PlanView::requestObject);
+    m_tree->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_tree, &QWidget::customContextMenuRequested, this, [this](const QPoint &pos) {
+        const QModelIndex index = m_tree->indexAt(pos);
+        if (objectAt(index).isEmpty())
+            return;
+        QMenu menu(this);
+        menu.addAction(tr("Show Object Info"), this, [this, index] { requestObject(index); });
+        menu.exec(m_tree->viewport()->mapToGlobal(pos));
+    });
 
     m_text = new QPlainTextEdit(this);
     m_text->setObjectName(QStringLiteral("planText"));
@@ -111,6 +126,7 @@ void PlanView::setPlan(const QCborMap &plan)
 
     // 노드는 부모가 먼저 오지 않을 수도 있어서 id로 찾아 붙인다.
     const QCborArray nodes = plan.value(QStringLiteral("nodes")).toArray();
+    const int objectColumn = int(headers.indexOf(QStringLiteral("Object")));
     QHash<qint64, QStandardItem *> byId;
     QList<QPair<qint64, QList<QStandardItem *>>> rows;
     for (const QCborValue &value : nodes) {
@@ -126,6 +142,17 @@ void PlanView::setPlan(const QCborMap &plan)
         }
         if (row.isEmpty())
             continue;
+        const QCborMap object = node.value(QStringLiteral("object")).toMap();
+        if (!object.value(QStringLiteral("name")).toString().isEmpty()) {
+            row.first()->setData(QVariant::fromValue(object), kObjectRole);
+            // 누를 수 있는 객체 이름은 링크처럼 (MySQL처럼 Object 컬럼이 없으면 첫 칸)
+            QStandardItem *link = objectColumn >= 0 && objectColumn < row.size() ? row[objectColumn] : row.first();
+            QFont font = link->font();
+            font.setUnderline(true);
+            link->setFont(font);
+            link->setForeground(m_tree->palette().color(QPalette::Link));
+            link->setToolTip(tr("%1\nClick to see the table and index information").arg(link->text()));
+        }
         byId.insert(node.value(QStringLiteral("id")).toInteger(), row.first());
         rows.append({node.value(QStringLiteral("parent")).toInteger(-1), row});
     }
@@ -152,6 +179,20 @@ void PlanView::setPlan(const QCborMap &plan)
         m_tree->setColumnWidth(column, qMin(m_tree->columnWidth(column) + 12, 520));
     }
     showTree(hasTree);
+}
+
+QCborMap PlanView::objectAt(const QModelIndex &index) const
+{
+    if (!index.isValid())
+        return {};
+    return index.siblingAtColumn(0).data(kObjectRole).value<QCborMap>();
+}
+
+void PlanView::requestObject(const QModelIndex &index)
+{
+    const QCborMap object = objectAt(index);
+    if (!object.isEmpty())
+        emit objectRequested(object);
 }
 
 QString PlanView::planText() const

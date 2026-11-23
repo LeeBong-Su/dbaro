@@ -47,8 +47,18 @@ public:
     // 찾기 막대가 찾은 곳 (모두 옅게, current번째는 진하게 칠한다). 빈 목록이면 지운다.
     void setSearchMatches(const QList<QTextCursor> &matches, int current = -1);
 
+    // 두 번 클릭한 단어와 같은 단어(대소문자 무시, 단어 단위)가 있는 곳. 선택이 바뀌거나 글을 고치면 지운다.
+    const QList<QTextCursor> &wordMarks() const { return m_wordMarks; }
+    QString markedWord() const { return m_markedWord; }
+    void markWordAt(int position);
+    void clearWordMarks();
+
     int lineNumberAreaWidth() const;
     void paintLineNumberArea(QPaintEvent *event);
+
+signals:
+    // 두 번 클릭한 단어가 count곳에 있다 (word가 비어 있으면 표시를 지웠다)
+    void wordMarksChanged(const QString &word, int count);
 
 protected:
     void resizeEvent(QResizeEvent *event) override;
@@ -57,13 +67,17 @@ protected:
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
+    void mouseDoubleClickEvent(QMouseEvent *event) override;
+    void dropEvent(QDropEvent *event) override;
     void paintEvent(QPaintEvent *event) override;
     void changeEvent(QEvent *event) override;
+    void wheelEvent(QWheelEvent *event) override; // Ctrl + 휠: 글자 크기
 
 private:
     void processKey(QKeyEvent *event);
     // 줄 번호 영역과 강조
     void updateLineNumberAreaWidth();
+    void applyFontSize(qreal pointSize);
     void updateLineNumberArea(const QRect &rect, int dy);
     void updateExtraSelections();
     void appendBracketMatch(QList<QTextEdit::ExtraSelection> &selections) const;
@@ -105,6 +119,8 @@ private:
 
     QList<QTextCursor> m_searchMatches;
     int m_currentSearchMatch = -1;
+    QList<QTextCursor> m_wordMarks;
+    QString m_markedWord;
 
     QList<QTextCursor> m_cursors; // 세로 커서 (2개 이상일 때만 사용)
     int m_primaryIndex = 0;       // m_cursors 중 주 커서 (깜빡이는 커서, 한글 조합 위치)

@@ -3,6 +3,13 @@ DBaro (디비바로) - 크로스플랫폼 DB 접속 툴
 실행
   dbaro.exe 를 실행한다. Java나 Qt를 따로 설치할 필요가 없다 (runtime\ 폴더에 Java 런타임이 들어 있다).
 
+명령줄
+  dbaro-cli.exe 는 DBaro에 저장한 연결로 SQL을 실행한다 (dbaro-cli --help).
+    dbaro-cli -l                              저장된 연결 목록
+    dbaro-cli 연결이름 "select * from emp"     실행하고 끝
+    dbaro-cli 연결이름                         대화형 (; 로 끝, \q 로 나가기)
+    @파일명                                    스크립트 폴더의 SQL 파일 실행 (\scripts 로 폴더 정하기)
+
 처음 연결할 때
   Oracle, MariaDB, MySQL, PostgreSQL JDBC 드라이버는 처음 연결할 때 Maven Central에서 내려받는다.
   인터넷이 막힌 환경이면 연결 설정의 Advanced 탭에서 드라이버 jar 파일을 직접 지정한다.

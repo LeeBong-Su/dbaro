@@ -2,10 +2,12 @@
 
 #include "UiHelpers.h"
 
+#include <QComboBox>
 #include <QEvent>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPainter>
+#include <QSignalBlocker>
 
 namespace {
 
@@ -51,8 +53,18 @@ ConnectionBar::ConnectionBar(QWidget *parent)
     nameFont.setBold(true);
     m_name->setFont(nameFont);
 
-    m_schemaLabel = new QLabel(this);
-    m_schemaLabel->setObjectName(QStringLiteral("connectionSchema"));
+    m_schemaCaption = new QLabel(this);
+    m_schemaCaption->setObjectName(QStringLiteral("connectionSchemaCaption"));
+    m_schemaCombo = new QComboBox(this);
+    m_schemaCombo->setObjectName(QStringLiteral("schemaSwitcher"));
+    m_schemaCombo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+    m_schemaCombo->setMaxVisibleItems(25);
+    m_schemaCombo->setFocusPolicy(Qt::ClickFocus); // Tab으로 에디터를 오갈 때 끼어들지 않게
+    connect(m_schemaCombo, &QComboBox::activated, this, [this](int index) {
+        const QString chosen = m_schemaCombo->itemText(index);
+        if (!chosen.isEmpty() && chosen != m_schema)
+            emit schemaChosen(chosen);
+    });
     m_details = new QLabel(this);
     m_details->setTextInteractionFlags(Qt::TextSelectableByMouse);
     m_environment = new QLabel(this);
@@ -68,7 +80,8 @@ ConnectionBar::ConnectionBar(QWidget *parent)
     layout->setSpacing(10);
     layout->addWidget(m_dot);
     layout->addWidget(m_name);
-    layout->addWidget(m_schemaLabel);
+    layout->addWidget(m_schemaCaption);
+    layout->addWidget(m_schemaCombo);
     layout->addWidget(m_details, 1);
     layout->addWidget(m_environment);
     layout->addWidget(m_readOnly);
@@ -98,12 +111,31 @@ void ConnectionBar::setState(State state, bool pendingTransaction, const QString
 void ConnectionBar::setSchema(const QString &schema)
 {
     m_schema = schema;
+    refreshSchemaItems();
     refresh();
+}
+
+void ConnectionBar::setSchemas(const QStringList &schemas)
+{
+    m_schemas = schemas;
+    refreshSchemaItems();
+    refresh();
+}
+
+void ConnectionBar::refreshSchemaItems()
+{
+    const QSignalBlocker blocker(m_schemaCombo);
+    QStringList items = m_schemas;
+    if (!m_schema.isEmpty() && !items.contains(m_schema))
+        items.prepend(m_schema); // 목록을 아직 못 받았거나 목록에 없는 스키마 (권한)
+    m_schemaCombo->clear();
+    m_schemaCombo->addItems(items);
+    m_schemaCombo->setCurrentIndex(int(items.indexOf(m_schema)));
 }
 
 QString ConnectionBar::schemaText() const
 {
-    return m_schemaLabel->isVisibleTo(this) ? m_schemaLabel->text() : QString();
+    return m_schemaCombo->isVisibleTo(this) ? m_schema : QString();
 }
 
 QString ConnectionBar::nameText() const
@@ -140,8 +172,9 @@ void ConnectionBar::refresh()
         m_name->setStyleSheet(QStringLiteral("color: %1;").arg(dim.name()));
         m_details->setText(tr("Choose a connection in the toolbar or double-click one in Database Explorer."));
         m_details->setStyleSheet(QStringLiteral("color: %1;").arg(dim.name()));
-        for (QLabel *label : {m_schemaLabel, m_environment, m_readOnly, m_pendingBadge, m_stateLabel})
+        for (QLabel *label : {m_schemaCaption, m_environment, m_readOnly, m_pendingBadge, m_stateLabel})
             label->hide();
+        m_schemaCombo->hide();
         update();
         return;
     }
@@ -154,14 +187,34 @@ void ConnectionBar::refresh()
     m_details->setText(target(profile));
     m_details->setStyleSheet(QStringLiteral("color: %1;").arg(dim.name()));
 
-    // USE로 바꾼 데이터베이스는 이름 옆에 테두리 칩으로 보여 준다.
-    m_schemaLabel->setVisible(!m_schema.isEmpty());
-    if (!m_schema.isEmpty()) {
-        m_schemaLabel->setText(tr("USE %1").arg(m_schema));
-        m_schemaLabel->setToolTip(tr("Default database for this tab (changed with USE)"));
-        m_schemaLabel->setStyleSheet(
-            QStringLiteral("QLabel { color: %1; border: 1px solid %2; border-radius: 4px; padding: 1px 7px; font-weight: 600; }")
-                .arg(pal.color(QPalette::WindowText).name(), pal.color(QPalette::Mid).name()));
+    // 이 탭의 지금 스키마: 접속해 있으면 이름 옆에 목록으로 (고르면 바로 바꾼다)
+    const bool online = m_state == State::Connected || m_state == State::Running;
+    const bool showSchema = online && (!m_schema.isEmpty() || !m_schemas.isEmpty());
+    m_schemaCaption->setVisible(showSchema);
+    m_schemaCombo->setVisible(showSchema);
+    m_schemaCombo->setEnabled(m_state == State::Connected);
+    if (showSchema) {
+        const bool databases = profile.type == DbType::MySQL || profile.type == DbType::MariaDB;
+        m_schemaCaption->setText(databases ? tr("Database") : tr("Schema"));
+        m_schemaCaption->setStyleSheet(QStringLiteral("color: %1;").arg(dim.name()));
+        QString tip;
+        switch (profile.type) {
+        case DbType::Oracle:
+        case DbType::Tibero:
+            tip = tr("Current schema of this tab (ALTER SESSION SET CURRENT_SCHEMA).\n"
+                     "Names without a schema, completion, DDL and DESC use it.");
+            break;
+        case DbType::PostgreSQL:
+            tip = tr("Schema searched first in this tab (SET search_path).\n"
+                     "Names without a schema, completion, DDL and DESC use it.");
+            break;
+        default:
+            tip = tr("Default database of this tab (USE).\n"
+                     "Names without a database, completion, DDL and DESC use it.");
+            break;
+        }
+        m_schemaCombo->setToolTip(tip);
+        m_schemaCaption->setToolTip(tip);
     }
 
     const QString envText = environmentLabel(profile.environment);

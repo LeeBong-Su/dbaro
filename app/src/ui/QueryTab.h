@@ -44,8 +44,13 @@ public:
     void setDialect(SqlDialect dialect);
     SqlDialect dialect() const { return m_dialect; }
 
-    // MySQL·MariaDB에서 USE로 바꾼 기본 데이터베이스 (비어 있으면 접속 설정의 기본값)
-    QString currentSchema() const { return m_currentSchema; }
+    // 이 탭 세션의 지금 스키마 (Oracle·Tibero CURRENT_SCHEMA, PostgreSQL search_path 첫 스키마,
+    // MySQL·MariaDB 데이터베이스). 접속 전이거나 모르면 빈 값
+    QString currentSchema() const;
+    // 사용자가 고른 스키마 (연결 정보 막대, 탐색기, 직접 실행한 ALTER SESSION·USE·SET search_path).
+    // 다시 접속하거나 앱을 다시 켜면 이 스키마로 바꾼다. 비어 있으면 접속 설정의 기본값
+    QString preferredSchema() const { return m_preferredSchema; }
+    void setPreferredSchema(const QString &schema) { m_preferredSchema = schema; }
 
     // "USE x" 문장이면 x를 돌려준다 (MySQL·MariaDB). 아니면 빈 문자열.
     static QString useTarget(const QString &sql);
@@ -67,11 +72,15 @@ public:
 
 signals:
     void cursorPositionChanged(int line, int column);
+    void schemaSwitchRequested(const QString &schema); // 연결 정보 막대에서 다른 스키마를 골랐다
 
 private:
     void showError(const SqlStatement &statement, const EngineError &error);
+    void prepareEditing();
+    void applyEdits(const QStringList &statements);
     void onStatementSucceeded(const SqlStatement &statement);
-    void setCurrentSchema(const QString &schema);
+    void onSchemaChanged(const QString &schema);
+    void loadSchemaList();
     void updateConnectionBar();
 
     QString m_connectionId;
@@ -79,7 +88,8 @@ private:
     QHash<QString, QString> m_defines;
     TextFileFormat m_fileFormat;
     QPointer<MetadataService> m_metadata;
-    QString m_currentSchema;
+    QString m_preferredSchema;
+    bool m_wasConnected = false;
     SqlDialect m_dialect = SqlDialect::Generic;
     ConnectionBar *m_connectionBar = nullptr;
     SqlEditor *m_editor = nullptr;

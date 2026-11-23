@@ -474,6 +474,11 @@ QByteArray xlsx(const QList<ExportColumn> &columns, const QList<QCborArray> &row
 
 } // namespace
 
+QString ResultExport::sqlLiteral(const ExportColumn &column, const QCborValue &value, SqlDialect dialect)
+{
+    return ::sqlLiteral(column, value, dialect);
+}
+
 QString ResultExport::valueText(const QCborValue &value)
 {
     switch (value.type()) {

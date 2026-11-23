@@ -8,9 +8,11 @@ import dbaro.engine.driver.DriverRegistry
 import dbaro.engine.exec.Connector
 import dbaro.engine.exec.Ddl
 import dbaro.engine.exec.ErrorInfo
+import dbaro.engine.exec.PlanObject
 import dbaro.engine.exec.Session
 import dbaro.engine.int
 import dbaro.engine.string
+import dbaro.engine.stringList
 import dbaro.engine.stringOrNull
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
@@ -75,7 +77,10 @@ class Server(input: InputStream, output: OutputStream, private val drivers: Driv
                 respond(id) {
                     val session = Connector.open(drivers, params, "s${sessionIds.getAndIncrement()}")
                     sessions[session.id] = session
-                    session.info()
+                    // 탭이 고른 스키마가 있으면 다시 적용한다 (다시 접속, 앱을 다시 켬)
+                    val schemaError = params.stringOrNull("schema")?.takeIf { it.isNotEmpty() }
+                        ?.let { session.applyInitialSchema(it) }
+                    session.info() + mapOf("schema" to session.currentSchema(), "schemaError" to schemaError)
                 }
             }
             "disconnect" -> {
@@ -83,7 +88,12 @@ class Server(input: InputStream, output: OutputStream, private val drivers: Driv
                 if (session == null) reply(id, emptyMap()) else session.submit { respond(id) { session.close(); emptyMap() } }
             }
             "execute" -> withSession(id, params) {
-                it.execute(params.string("sql"), params.int("pageSize", 500), params.int("queryTimeoutSec", 0))
+                val binds = (params["binds"] as? List<*>).orEmpty().mapNotNull { item ->
+                    (item as? Map<*, *>)?.let { bind ->
+                        Session.Bind(bind["value"], bind["type"] as? String ?: "VARCHAR", bind["out"] as? Boolean ?: false)
+                    }
+                }
+                it.execute(params.string("sql"), params.int("pageSize", 500), params.int("queryTimeoutSec", 0), binds)
             }
             "fetch" -> withSession(id, params) { it.fetch(params.string("cursorId"), params.int("count", 500)) }
             "closeCursor" -> withSession(id, params) { it.closeCursor(params.string("cursorId")); emptyMap() }
@@ -98,10 +108,38 @@ class Server(input: InputStream, output: OutputStream, private val drivers: Driv
                         params.string("name"),
                         params.bool("schemaQuoted", false),
                         params.bool("nameQuoted", false),
+                        params.stringOrNull("currentSchema")?.takeIf { s -> s.isNotEmpty() },
                     ),
                 )
             }
+            "tableInfo" -> withSession(id, params) {
+                it.tableInfo(
+                    Ddl.Request(
+                        params.stringOrNull("schema")?.takeIf { s -> s.isNotEmpty() },
+                        params.string("name"),
+                        params.bool("schemaQuoted", false),
+                        params.bool("nameQuoted", false),
+                        params.stringOrNull("currentSchema")?.takeIf { s -> s.isNotEmpty() },
+                    ),
+                )
+            }
+            "planObject" -> withSession(id, params) {
+                it.planObject(
+                    PlanObject.Request(
+                        params.stringOrNull("schema")?.takeIf { s -> s.isNotEmpty() },
+                        params.string("name"),
+                        params.stringOrNull("type")?.takeIf { s -> s.isNotEmpty() },
+                        params.stringOrNull("index")?.takeIf { s -> s.isNotEmpty() },
+                        params.stringOrNull("currentSchema")?.takeIf { s -> s.isNotEmpty() },
+                    ),
+                )
+            }
+            "executeBatch" -> withSession(id, params) {
+                it.executeBatch(params.stringList("statements"), params.bool("stopOnError", true))
+            }
             "metaSchemas" -> withSession(id, params) { it.schemas() }
+            "currentSchema" -> withSession(id, params) { mapOf("schema" to it.currentSchema()) }
+            "setSchema" -> withSession(id, params) { it.setSchema(params.string("schema")) }
             "metaObjects" -> withSession(id, params) { it.objects(params.string("schema")) }
             "metaColumns" -> withSession(id, params) { it.columns(params.string("schema"), params.string("table")) }
             else -> replyError(id, ErrorInfo.of("Unknown method: $method"))

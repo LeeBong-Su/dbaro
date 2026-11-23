@@ -12,9 +12,11 @@
 #include <QCborArray>
 #include <QClipboard>
 #include <QHeaderView>
+#include <QKeyEvent>
 #include <QLineEdit>
 #include <QMap>
 #include <QMenu>
+#include <QMimeData>
 #include <QPainter>
 #include <QPersistentModelIndex>
 #include <QSortFilterProxyModel>
@@ -22,6 +24,8 @@
 #include <QStyledItemDelegate>
 #include <QTreeView>
 #include <QVBoxLayout>
+
+#include <algorithm>
 
 namespace {
 
@@ -140,6 +144,36 @@ public:
     }
 };
 
+// 끌어다 놓기: 고른 항목의 이름을 글자(text/plain)로 넘긴다. 에디터에 놓으면 그 자리에 들어간다.
+class ExplorerProxy : public QSortFilterProxyModel
+{
+public:
+    using QSortFilterProxyModel::QSortFilterProxyModel;
+
+    std::function<QString(const QModelIndexList &)> textFor;
+
+    QStringList mimeTypes() const override { return {QStringLiteral("text/plain")}; }
+    Qt::DropActions supportedDragActions() const override { return Qt::CopyAction; }
+    QMimeData *mimeData(const QModelIndexList &indexes) const override
+    {
+        const QString text = textFor ? textFor(indexes) : QString();
+        if (text.isEmpty())
+            return nullptr; // 이름이 없는 항목(연결, 폴더)만 골랐으면 끌지 않는다
+        auto *data = new QMimeData;
+        data->setText(text);
+        return data;
+    }
+};
+
+// 트리에서 위에서 아래로 보이는 순서
+QList<int> treePath(const QModelIndex &index)
+{
+    QList<int> rows;
+    for (QModelIndex at = index; at.isValid(); at = at.parent())
+        rows.prepend(at.row());
+    return rows;
+}
+
 } // namespace
 
 ObjectExplorer::ObjectExplorer(MetadataService *metadata, QWidget *parent)
@@ -152,7 +186,9 @@ ObjectExplorer::ObjectExplorer(MetadataService *metadata, QWidget *parent)
     m_filter->setClearButtonEnabled(true);
 
     m_model = new QStandardItemModel(this);
-    m_proxy = new QSortFilterProxyModel(this);
+    auto *proxy = new ExplorerProxy(this);
+    proxy->textFor = [this](const QModelIndexList &indexes) { return namesOf(indexes).join(QStringLiteral(", ")); };
+    m_proxy = proxy;
     m_proxy->setSourceModel(m_model);
     m_proxy->setFilterCaseSensitivity(Qt::CaseInsensitive);
     m_proxy->setRecursiveFilteringEnabled(true);
@@ -167,6 +203,11 @@ ObjectExplorer::ObjectExplorer(MetadataService *metadata, QWidget *parent)
     m_tree->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_tree->setExpandsOnDoubleClick(false); // 두 번 클릭은 직접 처리한다 (테이블은 데이터 조회)
     m_tree->setContextMenuPolicy(Qt::CustomContextMenu);
+    m_tree->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    m_tree->setDragEnabled(true);
+    m_tree->setDragDropMode(QAbstractItemView::DragOnly);
+    m_tree->setDefaultDropAction(Qt::CopyAction);
+    m_tree->installEventFilter(this); // Ctrl+C: 고른 이름 복사
     m_tree->header()->setStretchLastSection(false);
     m_tree->header()->setSectionResizeMode(QHeaderView::ResizeToContents); // 긴 이름은 가로 스크롤
     enableShiftWheelHorizontalScroll(m_tree);
@@ -216,6 +257,12 @@ void ObjectExplorer::setConnections(const QList<ConnectionProfile> &profiles)
         if (m_metadata && m_metadata->isConnected(profile.id))
             setConnectedLook(profile.id, true);
     }
+}
+
+void ObjectExplorer::expandConnection(const QString &connectionId)
+{
+    if (QStandardItem *item = findConnection(connectionId))
+        expandItem(item);
 }
 
 void ObjectExplorer::setConnectedLook(const QString &profileId, bool connected)
@@ -505,7 +552,7 @@ void ObjectExplorer::onDoubleClicked(const QModelIndex &proxyIndex)
                                      item->data(NameRole).toString());
         break;
     case ColumnKind:
-        emit insertTextRequested(item->data(NameRole).toString());
+        emit insertTextRequested(nameOf(item));
         break;
     default:
         break;
@@ -514,15 +561,32 @@ void ObjectExplorer::onDoubleClicked(const QModelIndex &proxyIndex)
 
 void ObjectExplorer::showContextMenu(const QPoint &position)
 {
-    QStandardItem *item = sourceItem(m_tree->indexAt(position));
+    const QModelIndex clicked = m_tree->indexAt(position);
+    QStandardItem *item = sourceItem(clicked);
     if (!item || kindOf(item) == PlaceholderKind)
         return;
     const QString connectionId = item->data(ConnectionIdRole).toString();
 
     QMenu menu(this);
+    // 여러 항목을 고른 채 그중 하나를 오른쪽 클릭: 이름을 한꺼번에
+    const QModelIndexList selected = m_tree->selectionModel()->selectedIndexes();
+    if (selected.size() > 1 && selected.contains(clicked)) {
+        const QStringList names = namesOf(selected);
+        if (!names.isEmpty()) {
+            const QString text = names.join(QStringLiteral(", "));
+            menu.addAction(tr("Copy %n Name(s)", nullptr, int(names.size())), this,
+                           [text] { QGuiApplication::clipboard()->setText(text); });
+            menu.addAction(tr("Insert %n Name(s) into Editor", nullptr, int(names.size())), this,
+                           [this, text] { emit insertTextRequested(text); });
+            menu.exec(m_tree->viewport()->mapToGlobal(position));
+            return;
+        }
+    }
+
     switch (kindOf(item)) {
     case ConnectionKind:
         menu.addAction(tr("New Query Tab"), this, [this, connectionId] { emit newQueryRequested(connectionId); });
+        menu.addAction(tr("New CLI Tab"), this, [this, connectionId] { emit consoleRequested(connectionId); });
         menu.addAction(tr("Refresh"), this, [this, item] { reload(item); });
         menu.addAction(tr("Disconnect"), this, [this, connectionId] { disconnectProfile(connectionId); })
             ->setEnabled(m_metadata && m_metadata->isConnected(connectionId));
@@ -530,6 +594,9 @@ void ObjectExplorer::showContextMenu(const QPoint &position)
         menu.addAction(tr("Edit Connection..."), this, [this, connectionId] { emit editConnectionRequested(connectionId); });
         break;
     case SchemaKind:
+        menu.addAction(tr("Import Data into a New Table..."), this, [this, connectionId, item] {
+            emit importRequested(connectionId, item->data(SchemaRole).toString(), QString());
+        });
         if (usesDatabases(connectionId)) {
             const QString schema = item->data(SchemaRole).toString();
             QAction *use = menu.addAction(tr("Use This Database (USE)"), this,
@@ -537,6 +604,10 @@ void ObjectExplorer::showContextMenu(const QPoint &position)
             QFont font = use->font();
             font.setBold(true); // 두 번 클릭과 같은 동작
             use->setFont(font);
+        } else {
+            const QString schema = item->data(SchemaRole).toString();
+            menu.addAction(tr("Set as Current Schema of the Tab"), this,
+                           [this, connectionId, schema] { emit useSchemaRequested(connectionId, schema); });
         }
         menu.addAction(tr("New Query Tab"), this, [this, connectionId] { emit newQueryRequested(connectionId); });
         menu.addAction(tr("Refresh"), this, [this, item] { reload(item); });
@@ -551,6 +622,10 @@ void ObjectExplorer::showContextMenu(const QPoint &position)
         if (hasColumns(item->data(TypeRole).toString())) {
             menu.addAction(tr("Select Rows"), this,
                            [this, connectionId, schema, name] { emit openObjectRequested(connectionId, schema, name); });
+            menu.addAction(tr("Table Details"), this,
+                           [this, connectionId, schema, name] { emit tableDetailsRequested(connectionId, schema, name); });
+            menu.addAction(tr("Import Data..."), this,
+                           [this, connectionId, schema, name] { emit importRequested(connectionId, schema, name); });
         }
         menu.addAction(tr("Show DDL"), this,
                        [this, connectionId, schema, name] { emit ddlRequested(connectionId, schema, name); });
@@ -562,7 +637,7 @@ void ObjectExplorer::showContextMenu(const QPoint &position)
         break;
     }
     case ColumnKind: {
-        const QString name = item->data(NameRole).toString();
+        const QString name = nameOf(item);
         menu.addAction(tr("Copy Name"), this, [name] { QGuiApplication::clipboard()->setText(name); });
         menu.addAction(tr("Insert Name into Editor"), this, [this, name] { emit insertTextRequested(name); });
         break;
@@ -627,9 +702,63 @@ const ConnectionProfile *ObjectExplorer::profile(const QString &id) const
 
 QString ObjectExplorer::qualifiedName(const QStandardItem *object) const
 {
-    const ConnectionProfile *connection = profile(object->data(ConnectionIdRole).toString());
-    const SqlDialect dialect = connection ? sqlDialectFor(connection->type) : SqlDialect::Generic;
-    return SqlIdentifiers::qualified(object->data(SchemaRole).toString(), object->data(NameRole).toString(), dialect);
+    return SqlIdentifiers::qualified(object->data(SchemaRole).toString(), object->data(NameRole).toString(),
+                                     dialectOf(object));
+}
+
+SqlDialect ObjectExplorer::dialectOf(const QStandardItem *item) const
+{
+    const ConnectionProfile *connection = item ? profile(item->data(ConnectionIdRole).toString()) : nullptr;
+    return connection ? sqlDialectFor(connection->type) : SqlDialect::Generic;
+}
+
+QString ObjectExplorer::nameOf(const QStandardItem *item) const
+{
+    switch (kindOf(item)) {
+    case ObjectKind:
+        return qualifiedName(item);
+    case ColumnKind:
+        return SqlIdentifiers::quote(item->data(NameRole).toString(), dialectOf(item));
+    case SchemaKind:
+        return SqlIdentifiers::quote(item->data(SchemaRole).toString(), dialectOf(item));
+    default:
+        return {};
+    }
+}
+
+QStringList ObjectExplorer::namesOf(QModelIndexList proxyIndexes) const
+{
+    std::sort(proxyIndexes.begin(), proxyIndexes.end(), [](const QModelIndex &a, const QModelIndex &b) {
+        const QList<int> left = treePath(a);
+        const QList<int> right = treePath(b);
+        return std::lexicographical_compare(left.begin(), left.end(), right.begin(), right.end());
+    });
+    QStringList names;
+    for (const QModelIndex &index : std::as_const(proxyIndexes)) {
+        if (index.column() != 0)
+            continue;
+        const QString name = nameOf(sourceItem(index));
+        if (!name.isEmpty() && !names.contains(name))
+            names << name;
+    }
+    return names;
+}
+
+QStringList ObjectExplorer::selectedNames() const
+{
+    return namesOf(m_tree->selectionModel()->selectedIndexes());
+}
+
+bool ObjectExplorer::eventFilter(QObject *watched, QEvent *event)
+{
+    if (watched == m_tree && event->type() == QEvent::KeyPress
+        && static_cast<QKeyEvent *>(event)->matches(QKeySequence::Copy)) {
+        const QStringList names = selectedNames();
+        if (!names.isEmpty())
+            QGuiApplication::clipboard()->setText(names.join(QStringLiteral(", ")));
+        return true;
+    }
+    return QWidget::eventFilter(watched, event);
 }
 
 bool ObjectExplorer::selectedObject(QString *connectionId, QString *schema, QString *name) const

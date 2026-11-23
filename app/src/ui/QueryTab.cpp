@@ -7,8 +7,15 @@
 #include "QuerySession.h"
 #include "ResultPanel.h"
 #include "SqlEditor.h"
+#include "ResultModel.h"
+#include "core/ResultEdits.h"
+#include "core/SqlIdentifiers.h"
 
+#include <QCborArray>
 #include <QFrame>
+#include <QLocale>
+#include <QMessageBox>
+#include <QSet>
 #include <QRegularExpression>
 #include <QSplitter>
 #include <QTextBlock>
@@ -64,6 +71,8 @@ QueryTab::QueryTab(EngineClient *engine, QWidget *parent)
     connect(m_session, &QuerySession::statementFailed, this, &QueryTab::showError);
     connect(m_results, &ResultPanel::moreRowsRequested, m_session, [this] { m_session->fetchMore(); });
     connect(m_results, &ResultPanel::fetchAllRequested, m_session, [this] { m_session->fetchMore(5000); });
+    connect(m_results, &ResultPanel::editRequested, this, &QueryTab::prepareEditing);
+    connect(m_results, &ResultPanel::applyEditsRequested, this, &QueryTab::applyEdits);
     connect(m_session, &QuerySession::statementFinished, this, [this](const SqlStatement &statement, bool ok) {
         // 내보내기(SQL INSERT)에서 테이블 이름을 짐작할 수 있게 결과를 만든 문장을 알려 준다.
         if (ok && m_session->executionInfo().kind == ExecutionInfo::Kind::ResultSet)
@@ -79,6 +88,13 @@ QueryTab::QueryTab(EngineClient *engine, QWidget *parent)
     });
     connect(m_session, &QuerySession::planReceived, m_results, &ResultPanel::showPlan);
     connect(m_session, &QuerySession::statementSucceeded, this, &QueryTab::onStatementSucceeded);
+    connect(m_session, &QuerySession::schemaChanged, this, &QueryTab::onSchemaChanged);
+    connect(m_connectionBar, &ConnectionBar::schemaChosen, this, &QueryTab::schemaSwitchRequested);
+}
+
+QString QueryTab::currentSchema() const
+{
+    return m_session ? m_session->currentSchema() : QString();
 }
 
 QString QueryTab::useTarget(const QString &sql)
@@ -122,20 +138,44 @@ void QueryTab::onStatementSucceeded(const SqlStatement &statement)
     if (m_metadata && !m_connectionId.isEmpty() && ddl.match(statement.text).hasMatch())
         m_metadata->invalidate(m_connectionId);
 
-    if (m_dialect != SqlDialect::MySql)
-        return;
-    const QString schema = useTarget(statement.text);
-    if (!schema.isEmpty())
-        setCurrentSchema(schema);
+    // 스키마를 바꾸는 문장을 직접 실행했으면 서버에 지금 스키마를 물어 막대·자동완성에 반영하고,
+    // 다시 접속할 때도 그 스키마로 바꾸도록 기억한다.
+    static const QRegularExpression schemaChange(
+        QStringLiteral("^\\s*(?:ALTER\\s+SESSION\\s+SET\\s+CURRENT_SCHEMA\\b|USE\\s|"
+                       "SET\\s+(?:SESSION\\s+|LOCAL\\s+)?(?:SEARCH_PATH|SCHEMA)\\b)"),
+        QRegularExpression::CaseInsensitiveOption);
+    if (schemaChange.match(statement.text).hasMatch()) {
+        QPointer<QueryTab> self(this);
+        m_session->refreshCurrentSchema([self](const QString &schema) {
+            if (self && !schema.isEmpty())
+                self->m_preferredSchema = schema;
+        });
+    }
 }
 
-void QueryTab::setCurrentSchema(const QString &schema)
+void QueryTab::onSchemaChanged(const QString &schema)
 {
-    if (m_currentSchema == schema)
-        return;
-    m_currentSchema = schema;
     m_connectionBar->setSchema(schema);
     m_editor->completer()->setCurrentSchema(schema);
+}
+
+void QueryTab::loadSchemaList()
+{
+    if (!m_metadata || m_connectionId.isEmpty())
+        return;
+    // 탐색기·자동완성과 같은 메타데이터 캐시를 쓴다 (탭 세션은 쿼리용으로 비워 둔다).
+    QPointer<QueryTab> self(this);
+    m_metadata->request(
+        m_connectionId, QStringLiteral("metaSchemas"), {},
+        [self](const QCborMap &result, const QString &error) {
+            if (!self || !error.isEmpty() || !self->m_session->isConnected())
+                return;
+            QStringList names;
+            for (const QCborValue &value : result.value(QStringLiteral("names")).toArray())
+                names << value.toString();
+            self->m_connectionBar->setSchemas(names);
+        },
+        false);
 }
 
 void QueryTab::setDialect(SqlDialect dialect)
@@ -163,9 +203,19 @@ QueryTab::~QueryTab()
 void QueryTab::updateConnectionBar()
 {
     m_results->setRunning(m_session->isBusy());
-    if (!m_session->isConnected())
-        setCurrentSchema({}); // 다시 접속하면 접속 설정의 기본 데이터베이스로 돌아간다
-    else
+    const bool connected = m_session->isConnected();
+    if (connected && !m_wasConnected) {
+        // 고른 스키마로 바꾸지 못했으면(지워짐, 권한 없음) 다음 접속부터는 기본 스키마를 쓴다.
+        const QString current = m_session->currentSchema();
+        if (!m_preferredSchema.isEmpty() && !current.isEmpty()
+            && current.compare(m_preferredSchema, Qt::CaseInsensitive) != 0)
+            m_preferredSchema.clear();
+        loadSchemaList();
+    } else if (!connected && m_wasConnected) {
+        m_connectionBar->setSchemas({});
+    }
+    m_wasConnected = connected;
+    if (connected)
         m_editor->completer()->retryMetadata(); // 이제 비밀번호를 알고 있으니 메타데이터를 가져올 수 있다
     ConnectionBar::State state = ConnectionBar::State::NotConnected;
     if (m_session->isConnecting())
@@ -202,4 +252,104 @@ void QueryTab::showError(const SqlStatement &statement, const EngineError &error
     m_editor->setTextCursor(cursor);
     m_editor->setFocus();
     m_results->showLog();
+}
+
+void QueryTab::prepareEditing()
+{
+    // 결과가 테이블 하나에서 나왔는지, 그 테이블의 기본 키가 결과에 있는지 확인한다.
+    const std::optional<QualifiedName> target = ResultEdits::editTarget(m_results->resultSql(), m_dialect);
+    if (!target) {
+        m_results->editUnavailable(tr("Only the result of a single-table query can be edited:\n"
+                                      "SELECT ... FROM one table [WHERE ...] [ORDER BY ...], "
+                                      "without joins, GROUP BY, DISTINCT or UNION."));
+        return;
+    }
+    if (!m_metadata || m_connectionId.isEmpty()) {
+        m_results->editUnavailable(tr("This tab has no connection."));
+        return;
+    }
+    QCborMap params;
+    if (!target->schema.isEmpty())
+        params.insert(QStringLiteral("schema"), target->schema);
+    params.insert(QStringLiteral("name"), target->name);
+    params.insert(QStringLiteral("schemaQuoted"), target->schemaQuoted);
+    params.insert(QStringLiteral("nameQuoted"), target->nameQuoted);
+    QPointer<QueryTab> self(this);
+    m_metadata->request(
+        m_connectionId, QStringLiteral("tableInfo"), params,
+        [self](const QCborMap &table, const QString &error) {
+            if (!self)
+                return;
+            if (!error.isEmpty()) {
+                self->m_results->editUnavailable(tr("Could not read the table: %1").arg(error));
+                return;
+            }
+            const QList<ResultModel::Column> &resultColumns = self->m_results->model()->columns();
+            QSet<QString> tableColumns;
+            for (const QCborValue &column : table.value(QStringLiteral("columns")).toArray())
+                tableColumns.insert(column.toMap().value(QStringLiteral("name")).toString());
+            QList<bool> editable;
+            for (const ResultModel::Column &column : resultColumns)
+                editable.append(tableColumns.contains(column.name));
+
+            const QCborArray primaryKey = table.value(QStringLiteral("primaryKey")).toArray();
+            if (primaryKey.isEmpty()) {
+                self->m_results->editUnavailable(
+                    tr("%1 has no primary key, so the changed rows cannot be found safely.")
+                        .arg(table.value(QStringLiteral("name")).toString()));
+                return;
+            }
+            QList<int> keys;
+            for (const QCborValue &key : primaryKey) {
+                int found = -1;
+                for (int c = 0; c < resultColumns.size(); ++c) {
+                    if (resultColumns[c].name == key.toString())
+                        found = c;
+                }
+                if (found < 0) {
+                    self->m_results->editUnavailable(
+                        tr("Add the primary key column %1 to the SELECT list to edit this result.").arg(key.toString()));
+                    return;
+                }
+                keys.append(found);
+            }
+            const QString qualified = SqlIdentifiers::qualified(table.value(QStringLiteral("schema")).toString(),
+                                                                table.value(QStringLiteral("name")).toString(), self->m_dialect);
+            self->m_results->beginEditing(qualified, editable, keys);
+        },
+        true, true);
+}
+
+void QueryTab::applyEdits(const QStringList &statements)
+{
+    if (!m_session->isConnected() || m_session->isBusy()) {
+        QMessageBox::information(this, tr("Apply Changes"), tr("The tab is busy or not connected. Try again in a moment."));
+        return;
+    }
+    for (const QString &sql : statements)
+        m_results->appendLog(tr("SQL> %1").arg(sql));
+    QPointer<QueryTab> self(this);
+    const int count = int(statements.size());
+    m_session->executeBatch(statements, true, [self, count](const QCborMap &result, const EngineError &error) {
+        if (!self)
+            return;
+        const qint64 failed = result.value(QStringLiteral("failed")).toInteger();
+        if (error.isError() || failed > 0) {
+            QString message = error.message;
+            for (const QCborValue &item : result.value(QStringLiteral("errors")).toArray())
+                message = item.toMap().value(QStringLiteral("message")).toString();
+            self->m_results->appendLog(tr("Changes were not applied: %1").arg(message), true);
+            QMessageBox::warning(self, tr("Apply Changes"),
+                                 tr("A statement failed, so the changes stay in the grid.\n%1").arg(message));
+            return;
+        }
+        const qint64 affected = result.value(QStringLiteral("affected")).toInteger();
+        self->m_results->acceptEdits();
+        QString message = tr("%n statement(s) applied, %1 row(s) affected.", nullptr, count).arg(QLocale().toString(affected));
+        if (affected < count)
+            message += u' ' + tr("Some rows were not found (changed by someone else?).");
+        if (!self->m_session->autoCommit())
+            message += u' ' + tr("Not committed yet: commit to keep the changes.");
+        self->m_results->appendLog(message, affected < count);
+    });
 }

@@ -40,7 +40,7 @@ Windows 설치 방법은 [docs/dev-setup-windows.md](docs/dev-setup-windows.md)�
 
 | 들어가는 것 | 내용 |
 |---|---|
-| `dbaro.exe`, `Qt6*.dll`, 플러그인 폴더 | 앱과 Qt (`windeployqt`로 수집) |
+| `dbaro.exe`, `dbaro-cli.exe`, `Qt6*.dll`, 플러그인 폴더 | 앱, 명령줄 도구, Qt (`windeployqt`로 수집) |
 | `vcruntime140*.dll`, `msvcp140*.dll` 등 | MSVC 런타임 (앱 옆에 두는 방식) |
 | `engine\lib\*.jar` | 엔진 |
 | `runtime\` | `jlink`로 만든 Java 21 런타임 (JDBC·TLS·한국어 문자셋에 필요한 모듈만) |

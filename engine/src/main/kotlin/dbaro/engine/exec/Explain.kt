@@ -7,7 +7,8 @@ import java.util.concurrent.atomic.AtomicLong
 
 /**
  * 예상 실행 계획 (문장은 실행하지 않는다).
- * 결과: `columns`(표 머리글), `nodes`(id, parent(-1이면 맨 위), cells), 있으면 `text`(DB 고유 형식의 계획 글).
+ * 결과: `columns`(표 머리글), `nodes`(id, parent(-1이면 맨 위), cells, 있으면 object), 있으면 `text`(DB 고유 형식의 계획 글).
+ * `object`: 그 단계가 읽는 객체 {schema, name, type(TABLE, INDEX, ...), index(테이블을 읽을 때 쓴 인덱스)}. 앱이 객체 정보 창에 쓴다.
  * - Oracle·Tibero: EXPLAIN PLAN → PLAN_TABLE을 트리로, Oracle은 DBMS_XPLAN 글도 함께
  * - PostgreSQL: EXPLAIN (FORMAT JSON)을 트리로, 기본 EXPLAIN 글도 함께
  * - MySQL·MariaDB와 그 밖: EXPLAIN 결과 표 그대로 (MySQL 8은 FORMAT=TREE 글도 함께)
@@ -66,9 +67,22 @@ object Explain {
                 row.str("ACCESS_PREDICATES").takeIf { it.isNotEmpty() }?.let { "access($it)" },
                 row.str("FILTER_PREDICATES").takeIf { it.isNotEmpty() }?.let { "filter($it)" },
             ).joinToString(" ")
+            // OBJECT_TYPE: TABLE, TABLE (FIXED), INDEX, INDEX (UNIQUE), VIEW, MAT_VIEW ...
+            val objectType = row.str("OBJECT_TYPE").let { type ->
+                when {
+                    type.startsWith("INDEX") -> "INDEX"
+                    type.startsWith("TABLE") -> "TABLE"
+                    type.isEmpty() && operation.startsWith("INDEX") -> "INDEX"
+                    type.isEmpty() && operation.startsWith("TABLE ACCESS") -> "TABLE"
+                    else -> type.ifEmpty { null }
+                }
+            }
+            val planObject = if (name.isEmpty() || owner.isEmpty()) null
+            else mapOf("schema" to owner, "name" to name, "type" to objectType)
             mapOf(
                 "id" to (row.num("ID") ?: 0L),
                 "parent" to (row.num("PARENT_ID") ?: -1L),
+                "object" to planObject,
                 "cells" to listOf(
                     operation,
                     if (owner.isNotEmpty() && name.isNotEmpty()) "$owner.$name" else name,
@@ -146,6 +160,14 @@ object Explain {
             }.joinToString("; ")
 
             fun number(key: String) = (plan[key] as? Number)
+            val relationName = plan["Relation Name"]?.toString()
+            val indexName = plan["Index Name"]?.toString()
+            val planObject = when {
+                relationName != null ->
+                    mapOf("schema" to plan["Schema"]?.toString(), "name" to relationName, "type" to "TABLE", "index" to indexName)
+                indexName != null -> mapOf("schema" to null, "name" to indexName, "type" to "INDEX") // Bitmap Index Scan
+                else -> null
+            }
             val startup = number("Startup Cost")
             val total = number("Total Cost")
             val cost = if (startup != null && total != null) String.format(Locale.ROOT, "%.2f..%.2f", startup.toDouble(), total.toDouble()) else ""
@@ -154,6 +176,7 @@ object Explain {
                 mapOf(
                     "id" to id,
                     "parent" to parent,
+                    "object" to planObject,
                     "cells" to listOf(
                         operation,
                         objectName,
@@ -197,7 +220,16 @@ object Explain {
                 }
             }.getOrNull()
         }
-        val nodes = rows.mapIndexed { index, cells -> mapOf("id" to index.toLong(), "parent" to -1L, "cells" to cells.map { it.orEmpty() }) }
+        // MySQL·MariaDB: table(별칭일 수 있음)과 key(쓴 인덱스). <derived2>, <subquery2> 같은 임시 결과는 빼고
+        val tableColumn = columns.indexOfFirst { it.equals("table", ignoreCase = true) }
+        val keyColumn = columns.indexOfFirst { it.equals("key", ignoreCase = true) }
+        val nodes = rows.mapIndexed { index, cells ->
+            val table = cells.getOrNull(tableColumn)?.takeIf { it.isNotEmpty() && !it.startsWith("<") }
+            val planObject = table?.let {
+                mapOf("schema" to null, "name" to it, "type" to "TABLE", "index" to cells.getOrNull(keyColumn)?.takeIf { k -> k.isNotEmpty() })
+            }
+            mapOf("id" to index.toLong(), "parent" to -1L, "object" to planObject, "cells" to cells.map { it.orEmpty() })
+        }
         return mapOf("columns" to columns, "nodes" to nodes, "text" to text)
     }
 

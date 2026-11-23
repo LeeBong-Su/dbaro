@@ -2,7 +2,9 @@ package dbaro.engine.exec
 
 import dbaro.engine.Log
 import dbaro.engine.daemonThreads
+import java.sql.CallableStatement
 import java.sql.Connection
+import java.sql.PreparedStatement
 import java.sql.ResultSet
 import java.sql.Statement
 import java.sql.Types
@@ -34,6 +36,9 @@ class Session(val id: String, private val type: String, private val connection: 
     @Volatile
     private var running: Statement? = null
 
+    @Volatile
+    private var cancelRequested = false
+
     // Oracle 계열은 DBMS_OUTPUT을 켜 두고, 실행이 끝날 때마다 쌓인 줄을 가져온다.
     private val readsServerOutput = (type == "oracle" || type == "tibero") && enableServerOutput()
 
@@ -53,27 +58,49 @@ class Session(val id: String, private val type: String, private val connection: 
         )
     }
 
-    fun execute(sql: String, pageSize: Int, queryTimeoutSec: Int): Map<String, Any?> {
-        // DESC는 SQL*Plus·psql의 명령이라 Oracle·Tibero·PostgreSQL 서버가 모르므로 딕셔너리로 직접 답한다.
-        if (Describe.supports(type)) Describe.parse(sql)?.let { return describe(it) }
+    /**
+     * 위치 바인드 (?) 하나. [out]이면 CallableStatement의 OUT 파라미터로 등록하고 실행한 뒤 값을 돌려준다.
+     * [type]: VARCHAR, NUMERIC, CLOB (CLI의 VARIABLE)
+     */
+    class Bind(val value: Any?, val type: String, val out: Boolean)
 
-        val statement = connection.createStatement()
+    fun execute(sql: String, pageSize: Int, queryTimeoutSec: Int, binds: List<Bind> = emptyList()): Map<String, Any?> {
+        // DESC는 SQL*Plus·psql의 명령이라 Oracle·Tibero·PostgreSQL 서버가 모르므로 딕셔너리로 직접 답한다.
+        if (binds.isEmpty() && Describe.supports(type)) Describe.parse(sql)?.let { return describe(it) }
+
+        val callable = binds.any { it.out }
+        val statement: Statement = when {
+            binds.isEmpty() -> connection.createStatement()
+            callable -> connection.prepareCall(sql)
+            else -> connection.prepareStatement(sql)
+        }
         var keepOpen = false
         val start = System.nanoTime()
         try {
             if (queryTimeoutSec > 0) statement.queryTimeout = queryTimeoutSec
             statement.fetchSize = pageSize
+            if (statement is PreparedStatement) bindAll(statement, binds)
 
             running = statement
             val hasResultSet = try {
-                statement.execute(sql)
+                if (statement is PreparedStatement) statement.execute() else statement.execute(sql)
             } finally {
                 running = null
             }
             val executedAt = System.nanoTime()
 
             val result = linkedMapOf<String, Any?>()
-            if (hasResultSet) {
+            // OUT 파라미터가 있는 호출(PL/SQL 블록)은 결과 표 없이 OUT 값만 돌려준다.
+            // 드라이버에 따라(H2) OUT 값이 결과 집합의 첫 행에 묶여 있으면 그 행으로 옮겨 읽는다.
+            if (statement is CallableStatement) {
+                val outs = runCatching { readOuts(statement, binds) }.getOrElse { error ->
+                    if (!hasResultSet || statement.resultSet?.next() != true) throw error
+                    readOuts(statement, binds)
+                }
+                result["kind"] = "update"
+                result["updateCount"] = -1L
+                result["outBinds"] = outs
+            } else if (hasResultSet) {
                 val resultSet = statement.resultSet
                 val meta = resultSet.metaData
                 val types = IntArray(meta.columnCount) { meta.getColumnType(it + 1) }
@@ -107,6 +134,42 @@ class Session(val id: String, private val type: String, private val connection: 
         } finally {
             if (!keepOpen) runCatching { statement.close() }
         }
+    }
+
+    private fun jdbcType(type: String): Int = when (type.uppercase()) {
+        "NUMERIC", "NUMBER" -> Types.NUMERIC
+        "CLOB" -> Types.CLOB
+        else -> Types.VARCHAR
+    }
+
+    private fun bindAll(statement: PreparedStatement, binds: List<Bind>) {
+        binds.forEachIndexed { i, bind ->
+            val index = i + 1
+            val jdbc = jdbcType(bind.type)
+            when {
+                bind.out -> (statement as CallableStatement).registerOutParameter(index, jdbc)
+                bind.value == null -> statement.setNull(index, jdbc)
+                jdbc == Types.NUMERIC -> {
+                    val number = bind.value.toString().trim().toBigDecimalOrNull()
+                    if (number != null) statement.setBigDecimal(index, number) else statement.setString(index, bind.value.toString())
+                }
+                else -> statement.setString(index, bind.value.toString())
+            }
+        }
+    }
+
+    private fun readOuts(statement: CallableStatement, binds: List<Bind>): List<Any?> =
+        binds.mapIndexed { index, bind -> if (bind.out) outValue(statement.getObject(index + 1)) else null }
+
+    /** OUT 파라미터 값 (결과 표와 같은 규칙: 큰 숫자는 문자열, CLOB은 64K 글자까지) */
+    private fun outValue(value: Any?): Any? = when (value) {
+        null -> null
+        is java.sql.Clob -> value.getSubString(1, minOf(value.length(), 65_536L).toInt())
+        is java.math.BigDecimal -> value.toPlainString()
+        is Int, is Long, is Short, is Byte -> (value as Number).toLong()
+        is Double, is Float -> (value as Number).toDouble()
+        is Boolean -> value
+        else -> value.toString()
     }
 
     /** DESC 결과. 행이 적으므로 한 번에 모두 보낸다. */
@@ -158,11 +221,70 @@ class Session(val id: String, private val type: String, private val connection: 
     /** 객체 하나의 DDL 스크립트 (코멘트, 인덱스, 트리거, 시노님, 권한 포함) */
     fun ddl(request: Ddl.Request): Map<String, Any?> = Ddl.script(type, connection, request).toMap()
 
+    /** 테이블 구조 (컬럼, 기본 키, 인덱스, 외래 키) */
+    fun tableInfo(request: Ddl.Request): Map<String, Any?> = TableInfo.describe(type, connection, request)
+
+    fun planObject(request: PlanObject.Request): Map<String, Any?> = PlanObject.describe(type, connection, request)
+
+    /**
+     * 문장 여러 개를 차례로 실행한다 (데이터 불러오기, 결과 편집 적용). 앱과 한 번만 주고받는다.
+     * JDBC 배치는 실패한 지점을 드라이버마다 다르게 알려 줘서 쓰지 않고, 하나씩 실행해 정확히 남긴다.
+     * stopOnError가 아니면 실패한 문장을 건너뛰고 계속한다 (PostgreSQL 트랜잭션은 문장마다 세이브포인트로 지킨다).
+     * 문장 사이에서 cancel을 받으면 거기서 멈춘다.
+     */
+    fun executeBatch(statements: List<String>, stopOnError: Boolean): Map<String, Any?> {
+        val start = System.nanoTime()
+        cancelRequested = false
+        var executed = 0
+        var failed = 0
+        var affected = 0L
+        var stoppedAt = -1
+        val errors = ArrayList<Map<String, Any?>>()
+        val guard = type == "postgres" && !stopOnError && !connection.autoCommit
+        connection.createStatement().use { statement ->
+            for ((index, sql) in statements.withIndex()) {
+                if (cancelRequested) {
+                    stoppedAt = index
+                    break
+                }
+                val savepoint = if (guard) connection.setSavepoint() else null
+                try {
+                    running = statement
+                    statement.execute(sql)
+                    affected += statement.updateCount.coerceAtLeast(0)
+                    executed++
+                    savepoint?.let { runCatching { connection.releaseSavepoint(it) } }
+                } catch (e: Exception) {
+                    savepoint?.let { runCatching { connection.rollback(it) } }
+                    failed++
+                    if (errors.size < 100) errors.add(mapOf("index" to index, "message" to (e.message ?: e.toString())))
+                    if (stopOnError) {
+                        stoppedAt = index
+                        break
+                    }
+                } finally {
+                    running = null
+                }
+            }
+        }
+        return mapOf(
+            "executed" to executed,
+            "failed" to failed,
+            "skipped" to statements.size - executed - failed, // 멈춘 뒤 실행하지 않은 문장
+            "affected" to affected,
+            "stoppedAt" to stoppedAt,
+            "cancelled" to cancelRequested,
+            "errors" to errors,
+            "elapsedMs" to (System.nanoTime() - start) / 1_000_000,
+        )
+    }
+
     fun closeCursor(cursorId: String) {
         cursors.remove(cursorId)?.close()
     }
 
     fun cancel() {
+        cancelRequested = true
         val statement = running ?: return
         runCatching { statement.cancel() }.onFailure { Log.error("Cancel failed", it) }
     }
@@ -173,6 +295,51 @@ class Session(val id: String, private val type: String, private val connection: 
 
     private val usesCatalogs = type == "mysql" || type == "mariadb"
     private val oracleFamily = type == "oracle" || type == "tibero"
+
+    /** 이 세션의 지금 스키마 (MySQL·MariaDB는 데이터베이스). 모르면 null */
+    fun currentSchema(): String? = runCatching {
+        when {
+            oracleFamily -> queryString("SELECT SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA') FROM DUAL")
+            type == "postgres" -> queryString("SELECT current_schema()")
+            usesCatalogs -> queryString("SELECT DATABASE()")
+            else -> connection.schema
+        }
+    }.getOrNull()
+
+    /**
+     * 이 세션의 기본 스키마를 바꾼다 (이름은 정확한 이름, 따옴표 없이).
+     * Oracle·Tibero `ALTER SESSION SET CURRENT_SCHEMA`, PostgreSQL `SET search_path`(public은 뒤에 남긴다),
+     * MySQL·MariaDB `USE`, 그 밖은 JDBC setSchema. 실행한 문장(`sql`)과 바꾼 뒤의 스키마(`schema`)를 돌려준다.
+     */
+    fun setSchema(name: String): Map<String, Any?> {
+        require(name.isNotEmpty()) { "Schema name is empty" }
+        val sql = when {
+            oracleFamily -> "ALTER SESSION SET CURRENT_SCHEMA = ${doubleQuoted(name)}"
+            type == "postgres" ->
+                if (name == "public") "SET search_path TO public" else "SET search_path TO ${doubleQuoted(name)}, public"
+            usesCatalogs -> "USE `" + name.replace("`", "``") + "`"
+            else -> null
+        }
+        if (sql != null) connection.createStatement().use { it.execute(sql) } else connection.schema = name
+        return mapOf("schema" to currentSchema(), "sql" to sql)
+    }
+
+    private fun doubleQuoted(name: String) = "\"" + name.replace("\"", "\"\"") + "\""
+
+    private fun queryString(sql: String): String? =
+        connection.createStatement().use { st -> st.executeQuery(sql).use { rs -> if (rs.next()) rs.getString(1) else null } }
+
+    /**
+     * 접속하자마자 탭이 고른 스키마로 바꾼다. 실패해도(스키마가 사라짐, 권한 없음) 접속은 그대로 두고 오류 글을 돌려준다.
+     * PostgreSQL 수동 커밋은 SET이 트랜잭션 안에서 실행되므로 바로 커밋해서 나중에 롤백해도 돌아가지 않게 한다.
+     */
+    fun applyInitialSchema(name: String): String? {
+        val error = runCatching { setSchema(name) }.exceptionOrNull()
+        if (type == "postgres" && !connection.autoCommit) {
+            runCatching { if (error == null) connection.commit() else connection.rollback() }
+        }
+        return error?.let { it.message ?: it.toString() }
+    }
 
     fun schemas(): Map<String, Any?> {
         val meta = connection.metaData

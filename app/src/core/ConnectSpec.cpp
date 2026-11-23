@@ -19,6 +19,8 @@ QCborMap ConnectSpec::toCbor() const
     map.insert(QStringLiteral("readOnly"), readOnly);
     map.insert(QStringLiteral("connectTimeoutSec"), connectTimeoutSec);
     map.insert(QStringLiteral("initSql"), QCborArray::fromStringList(initSql));
+    if (!schema.isEmpty())
+        map.insert(QStringLiteral("schema"), schema);
     return map;
 }
 

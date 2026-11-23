@@ -2,6 +2,8 @@
 
 #include "core/SqlSafety.h"
 
+#include <utility>
+
 namespace {
 
 QStringList toStringList(const QCborValue &value)
@@ -79,16 +81,20 @@ void QuerySession::connectTo(const ConnectSpec &spec, const QString &profileId, 
     emit message(tr("Connecting to %1 ...").arg(spec.url), false);
 
     QPointer<QuerySession> self(this);
+    const QString requestedSchema = spec.schema;
     m_engine->request(QStringLiteral("connect"), spec.toCbor(),
-                      [self, profileId, done](const QCborMap &result, const EngineError &error) {
+                      [self, profileId, done, requestedSchema](const QCborMap &result, const EngineError &error) {
                           if (!self)
                               return;
                           self->m_connecting = false;
+                          const QList<std::function<void(bool)>> waiters = std::exchange(self->m_connectWaiters, {});
                           if (error.isError()) {
                               emit self->message(tr("Connection failed: %1").arg(error.message), true);
                               emit self->stateChanged();
                               if (done)
                                   done(false);
+                              for (const auto &waiter : waiters)
+                                  waiter(false);
                               return;
                           }
                           self->m_sessionId = result.value(QStringLiteral("sessionId")).toString();
@@ -100,10 +106,84 @@ void QuerySession::connectTo(const ConnectSpec &spec, const QString &profileId, 
                                                  .arg(self->m_serverInfo,
                                                       result.value(QStringLiteral("driverVersion")).toString()),
                                              false);
+                          const QString schemaError = result.value(QStringLiteral("schemaError")).toString();
+                          if (!schemaError.isEmpty())
+                              emit self->message(tr("Could not switch to schema %1: %2").arg(requestedSchema, schemaError), true);
+                          self->setCurrentSchemaValue(result.value(QStringLiteral("schema")).toString());
                           emit self->stateChanged();
                           if (done)
                               done(true);
+                          for (const auto &waiter : waiters) {
+                              if (!self)
+                                  return;
+                              waiter(self->isConnected());
+                          }
                       });
+}
+
+void QuerySession::setSchema(const QString &schema, std::function<void(bool)> done)
+{
+    if (!isConnected() || m_busy || !m_engine || schema.isEmpty()) {
+        if (done)
+            done(false);
+        return;
+    }
+    setBusy(true);
+    QPointer<QuerySession> self(this);
+    m_engine->request(QStringLiteral("setSchema"),
+                      params({{QStringLiteral("sessionId"), m_sessionId}, {QStringLiteral("schema"), schema}}),
+                      [self, schema, done](const QCborMap &result, const EngineError &error) {
+                          if (!self)
+                              return;
+                          self->setBusy(false);
+                          if (error.isError()) {
+                              emit self->message(tr("Could not switch to schema %1: %2").arg(schema, error.message), true);
+                              if (done)
+                                  done(false);
+                              return;
+                          }
+                          // 실행한 문장도 로그에 남긴다 (ALTER SESSION SET CURRENT_SCHEMA = ...)
+                          const QString sql = result.value(QStringLiteral("sql")).toString();
+                          const QString current = result.value(QStringLiteral("schema")).toString();
+                          emit self->message(sql.isEmpty() ? tr("Current schema: %1").arg(current)
+                                                           : tr("%1\nCurrent schema: %2").arg(sql, current),
+                                             false);
+                          self->setCurrentSchemaValue(current);
+                          if (done)
+                              done(true);
+                      });
+}
+
+void QuerySession::refreshCurrentSchema(std::function<void(const QString &)> done)
+{
+    if (!isConnected() || !m_engine)
+        return;
+    QPointer<QuerySession> self(this);
+    m_engine->request(QStringLiteral("currentSchema"), params({{QStringLiteral("sessionId"), m_sessionId}}),
+                      [self, done](const QCborMap &result, const EngineError &error) {
+                          if (!self || error.isError() || !self->isConnected())
+                              return;
+                          const QString current = result.value(QStringLiteral("schema")).toString();
+                          self->setCurrentSchemaValue(current);
+                          if (done)
+                              done(current);
+                      });
+}
+
+void QuerySession::setCurrentSchemaValue(const QString &schema)
+{
+    if (m_currentSchema == schema)
+        return;
+    m_currentSchema = schema;
+    emit schemaChanged(schema);
+}
+
+void QuerySession::whenConnected(std::function<void(bool)> callback)
+{
+    if (m_connecting)
+        m_connectWaiters.append(std::move(callback));
+    else
+        callback(isConnected());
 }
 
 void QuerySession::disconnectFromServer()
@@ -119,6 +199,7 @@ void QuerySession::disconnectFromServer()
     m_queue.clear();
     m_busy = false;
     setPendingTransaction(false);
+    setCurrentSchemaValue({});
     emit message(tr("Disconnected."), false);
     emit stateChanged();
 }
@@ -294,6 +375,7 @@ void QuerySession::rollback()
                           }
                           self->setPendingTransaction(false);
                           emit self->message(tr("Rolled back."), false);
+                          self->refreshCurrentSchema(); // PostgreSQL은 트랜잭션 안의 SET search_path도 되돌린다
                       });
 }
 
@@ -322,6 +404,33 @@ void QuerySession::setAutoCommit(bool autoCommit)
                               emit self->message(tr("Pending changes were committed (auto-commit on)."), false);
                           }
                           emit self->stateChanged();
+                      });
+}
+
+void QuerySession::executeBatch(const QStringList &statements, bool stopOnError,
+                                std::function<void(const QCborMap &, const EngineError &)> done)
+{
+    if (!isConnected() || m_busy || !m_engine) {
+        done({}, EngineError::of(tr("The tab is not connected or is busy.")));
+        return;
+    }
+    setBusy(true);
+    QCborArray list;
+    for (const QString &sql : statements)
+        list.append(sql);
+    QPointer<QuerySession> self(this);
+    m_engine->request(QStringLiteral("executeBatch"),
+                      params({{QStringLiteral("sessionId"), m_sessionId},
+                              {QStringLiteral("statements"), list},
+                              {QStringLiteral("stopOnError"), stopOnError}}),
+                      [self, done](const QCborMap &result, const EngineError &error) {
+                          if (!self)
+                              return;
+                          self->setBusy(false);
+                          // 수동 커밋이면 커밋하기 전까지 남는다
+                          if (!error.isError() && result.value(QStringLiteral("executed")).toInteger() > 0 && !self->m_autoCommit)
+                              self->setPendingTransaction(true);
+                          done(result, error);
                       });
 }
 
@@ -380,6 +489,7 @@ void QuerySession::markDisconnected(const QString &reason)
     m_busy = false;
     m_fetching = false;
     m_pendingTransaction = false;
+    setCurrentSchemaValue({});
     emit message(reason, true);
     emit stateChanged();
 }

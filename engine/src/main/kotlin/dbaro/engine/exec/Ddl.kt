@@ -14,7 +14,17 @@ import java.sql.SQLException
  * 이름은 따옴표로 감싸지 않았으면 DB 규칙에 맞춘다 (Oracle 대문자, PostgreSQL 소문자). 스키마가 없으면 현재 스키마.
  */
 object Ddl {
-    class Request(val schema: String?, val name: String, val schemaQuoted: Boolean, val nameQuoted: Boolean)
+    /**
+     * 찾을 객체. [currentSchema]는 스키마 없이 쓴 이름을 찾을 스키마 (쿼리 탭에서 바꾼 스키마).
+     * 메타데이터 세션은 탭과 다른 세션이라 탭의 ALTER SESSION·search_path·USE가 보이지 않아서 따로 받는다.
+     */
+    class Request(
+        val schema: String?,
+        val name: String,
+        val schemaQuoted: Boolean,
+        val nameQuoted: Boolean,
+        val currentSchema: String? = null,
+    )
 
     class Result(val schema: String, val name: String, val type: String, val script: String) {
         fun toMap(): Map<String, Any?> = mapOf("schema" to schema, "name" to name, "type" to type, "script" to script)
@@ -94,6 +104,7 @@ object Ddl {
 
         fun script(request: Request): Result {
             var owner = request.schema?.let { if (request.schemaQuoted) it else it.uppercase() }
+                ?: request.currentSchema
                 ?: c.string("SELECT SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA') FROM DUAL")
                 ?: throw SQLException("Could not determine the current schema.")
             var name = if (request.nameQuoted) request.name else request.name.uppercase()
@@ -238,7 +249,7 @@ object Ddl {
         fun quote(name: String) = "`" + name.replace("`", "``") + "`"
 
         fun script(request: Request): Result {
-            val schemaGuess = request.schema ?: c.string("SELECT DATABASE()")
+            val schemaGuess = request.schema ?: request.currentSchema ?: c.string("SELECT DATABASE()")
                 ?: throw SQLException("No database selected. Write it as database.name or run USE first.")
 
             // 대소문자 구분은 서버 설정(lower_case_table_names)에 따라 다르므로 대소문자를 무시하고 찾는다.
@@ -320,10 +331,17 @@ object Ddl {
 
     private class Postgres(val c: Connection) {
         fun script(request: Request): Result {
+            val name = if (request.nameQuoted) request.name else request.name.lowercase()
+            // 탭의 search_path 첫 스키마에 없으면 이 세션의 current_schema()에서 찾는다 (public 등)
             val schema = request.schema?.let { if (request.schemaQuoted) it else it.lowercase() }
+                ?: request.currentSchema?.takeIf { hint ->
+                    c.string(
+                        "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = ? AND c.relname = ?",
+                        hint, name,
+                    ) != null
+                }
                 ?: c.string("SELECT current_schema()")
                 ?: throw SQLException("Could not determine the current schema.")
-            val name = if (request.nameQuoted) request.name else request.name.lowercase()
 
             val relation = c.rows(
                 "SELECT c.oid, c.relkind, quote_ident(n.nspname) || '.' || quote_ident(c.relname), pg_get_userbyid(c.relowner) " +
@@ -475,7 +493,7 @@ object Ddl {
         }
 
         fun script(request: Request): Result {
-            val schemaGuess = request.schema ?: c.schema
+            val schemaGuess = request.schema ?: request.currentSchema ?: c.schema
             // 따옴표 없는 이름은 그대로, 대문자, 소문자 순서로 찾아본다.
             val candidates = if (request.nameQuoted) listOf(request.name) else listOf(request.name, request.name.uppercase(), request.name.lowercase()).distinct()
             val schemaCandidates = when {

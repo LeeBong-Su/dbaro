@@ -19,6 +19,7 @@ struct ConnectSpec
     bool readOnly = false;
     int connectTimeoutSec = 10;
     QStringList initSql; // 접속 직후 실행할 문장들
+    QString schema;      // 접속 직후 바꿀 스키마 (쿼리 탭에서 고른 것). 비우면 접속 설정의 기본값
 
     QCborMap toCbor() const;
     static ConnectSpec fromProfile(const ConnectionProfile &profile, const QString &password, bool autoCommit);
