@@ -132,8 +132,9 @@ qt_add_resources(dbaro_lib "icons"
         resources/icons/close.svg
         resources/icons/column.svg
         resources/icons/commit.svg
+        resources/icons/connection-add.svg
+        resources/icons/connections.svg
         resources/icons/console.svg
-        resources/icons/database-add.svg
         resources/icons/database.svg
         resources/icons/dbaro.svg
         resources/icons/explain.svg

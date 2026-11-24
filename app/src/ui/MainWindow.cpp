@@ -360,7 +360,7 @@ void MainWindow::createActions()
     connect(m_closeWindowAction, &QAction::triggered, this, &QWidget::close);
 
     // 다른 연결은 새 창으로 연다.
-    m_newConnectionAction = new QAction(Icons::get(QStringLiteral("database-add")), tr("New Connection..."), this);
+    m_newConnectionAction = new QAction(Icons::get(QStringLiteral("connection-add")), tr("New Connection..."), this);
     m_newConnectionAction->setToolTip(tr("Add a connection and open it in a new window"));
     connect(m_newConnectionAction, &QAction::triggered, this, [this] { m_app->newConnection(this); });
 
@@ -368,7 +368,8 @@ void MainWindow::createActions()
     connect(m_editConnectionAction, &QAction::triggered, this,
             [this] { m_app->editConnections(this, false, m_connectionId); });
 
-    m_manageConnectionsAction = new QAction(Icons::get(QStringLiteral("database")), tr("Connections..."), this);
+    // 아이콘: 플러그 (Database Explorer의 원통과 헷갈리지 않게). New Connection은 플러그 + 초록 +
+    m_manageConnectionsAction = new QAction(Icons::get(QStringLiteral("connections")), tr("Connections..."), this);
     m_manageConnectionsAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_O));
     m_manageConnectionsAction->setToolTip(
         withShortcut(tr("Choose another connection (opens in its own window)"), m_manageConnectionsAction->shortcut()));

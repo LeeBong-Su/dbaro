@@ -72,7 +72,7 @@ LauncherWindow::LauncherWindow(AppController *app, QWidget *parent)
     m_empty->setObjectName(QStringLiteral("launcherEmpty"));
     m_empty->setAlignment(Qt::AlignCenter);
 
-    auto *newButton = new QPushButton(Icons::get(QStringLiteral("database-add")), tr("New Connection..."), this);
+    auto *newButton = new QPushButton(Icons::get(QStringLiteral("connection-add")), tr("New Connection..."), this);
     m_edit = new QPushButton(tr("Edit..."), this);
     m_open = new QPushButton(tr("Open"), this);
     m_open->setDefault(true);
