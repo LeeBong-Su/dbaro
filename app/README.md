@@ -24,11 +24,12 @@ DB 연결은 직접 하지 않고 엔진 프로세스(`../engine`)에 맡긴다.
 | Tab / Shift+Tab | 들여쓰기 / 내어쓰기 (여러 줄 선택 시 줄 단위) |
 | Ctrl+/ | 줄 주석 켜기·끄기 |
 | Ctrl+E | 커서가 있는 문장의 예상 실행 계획 (실행하지 않음) |
+| Alt+X | 커서가 있는 문장을 실행해서 얻은 실제 실행 계획 (단계별 실제 행 수·시간, INSERT·UPDATE·DELETE·MERGE는 실행 후 되돌림) |
 | F4 | 블록 선택한(또는 커서가 있는) 테이블·객체 이름의 DDL 스크립트 (코멘트, 인덱스, 트리거, 시노님, 권한 포함) |
 | Shift+F4 | 테이블 상세 (컬럼, 인덱스, 외래 키, DDL) |
 | Ctrl+Delete | 결과 편집 중 고른 행을 지울 행으로 표시 (다시 누르면 취소) |
 | 두 번 클릭 | 그 단어를 고르고 같은 단어를 모두 칠한다 (Esc로 지움) |
-| Ctrl+Space | 자동완성 목록 열기 (입력 중에는 두 글자부터, 점 뒤에서는 바로 열림). Enter/Tab 넣기, Esc 닫기 |
+| Ctrl+Space | 자동완성 목록 열기 (입력 중에는 두 글자부터, 점 뒤에서는 바로 열림). Enter/Tab 넣기, Esc 닫기. `JOIN `·`ON ` 다음 띄어쓰기는 외래 키로 잇는 테이블·조건이 있으면 그것만 띄움 |
 | Shift+마우스 휠 | 좌우 스크롤 (에디터, 결과 그리드, 탐색기) |
 | Ctrl+F / Ctrl+R (Ctrl+H) | 찾기 / 바꾸기 막대. Enter 다음, Shift+Enter 이전, Esc 닫기 |
 | F3 / Shift+F3 | 다음 / 이전 찾기 |
@@ -49,8 +50,10 @@ DB 연결은 직접 하지 않고 엔진 프로세스(`../engine`)에 맡긴다.
 - 엑셀(.xlsx)·CSV 파일을 테이블로 불러오기: Query → Import Data... 또는 탐색기에서 테이블(있는 테이블)이나 스키마(새 테이블) 오른쪽 클릭.
 - 스키마 바꾸기: 쿼리 탭 위 연결 정보 막대의 Schema(MySQL·MariaDB는 Database) 목록에서 고른다. Oracle·Tibero는 `ALTER SESSION SET CURRENT_SCHEMA`, PostgreSQL은 `search_path`, MySQL은 `USE`. 탭마다 기억해서 다시 접속해도 유지된다.
 - 탐색기에서 여러 객체·컬럼을 Ctrl·Shift+클릭으로 골라 에디터로 끌어다 놓으면 이름이 들어간다. Ctrl+C로 복사.
-- 예상 실행 계획(Ctrl+E) 트리에서 오퍼레이션을 누르면 그 단계가 읽는 테이블·인덱스 정보(인덱스와 통계, 컬럼)가 별도 창에 나온다.
+- 실행 계획(Ctrl+E, Alt+X) 트리에서 Object 칸의 링크(MySQL은 Operation 칸)를 두 번 클릭하면 그 단계가 읽는 테이블·인덱스 정보(인덱스와 통계, 컬럼)가 별도 창에 나온다. 오른쪽 클릭 Show Object Info도 같다.
+- 실제 실행 계획(Alt+X)은 예상과 실제 행 수가 10배 이상(100행 이상) 다른 단계를 주황색으로 칠한다. 옵티마이저가 잘못 짐작한 곳이라 통계를 확인해 볼 자리다. Oracle은 `DBMS_XPLAN.DISPLAY_CURSOR 'ADVANCED ALLSTATS LAST'` 글(Query Block Name, Outline Data, Peeked Binds, Predicate·Column Projection Information 포함)을 먼저 보이고(Tree로 바꿔 볼 수 있음), `V$SESSION`, `V$SQL_PLAN_STATISTICS_ALL`을 읽을 권한(예: SELECT_CATALOG_ROLE)이 있어야 한다.
 - Log·Output 탭은 오른쪽 클릭 → Clear로 비운다.
+- 실행·계획·F4 DDL·테이블 상세가 0.4초 넘게 걸리면 기다리는 중임을 보인다: 결과 영역에 하는 일·문장·흐르는 시간·Cancel 카드, 탭 아이콘의 돌아가는 원호, F4는 에디터 오른쪽 위 알림.
 
 ## 명령줄 (dbaro-cli)
 

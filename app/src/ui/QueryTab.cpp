@@ -1,5 +1,6 @@
 #include "QueryTab.h"
 
+#include "BusyIndicator.h"
 #include "ConnectionBar.h"
 #include "FindBar.h"
 #include "MetadataService.h"
@@ -30,7 +31,8 @@ QueryTab::QueryTab(EngineClient *engine, QWidget *parent)
     m_editor = new SqlEditor(this);
     m_editor->setObjectName(QStringLiteral("sqlEditor"));
     m_editor->setFrameShape(QFrame::NoFrame);
-    m_editor->setPlaceholderText(tr("Write SQL here. Ctrl+Enter runs the current statement, F5 runs the script, Ctrl+E shows its plan."));
+    m_editor->setPlaceholderText(tr("Write SQL here. Ctrl+Enter runs the current statement, F5 runs the script, "
+                                    "Ctrl+E shows its estimated plan, Alt+X its actual plan."));
 
     m_results = new ResultPanel(this);
 
@@ -87,9 +89,22 @@ QueryTab::QueryTab(EngineClient *engine, QWidget *parent)
             m_results->showLog();
     });
     connect(m_session, &QuerySession::planReceived, m_results, &ResultPanel::showPlan);
+    connect(m_session, &QuerySession::activityChanged, m_results, &ResultPanel::setActivity);
+    connect(m_results, &ResultPanel::cancelRequested, m_session, &QuerySession::cancel);
+    m_badge = new BusyBadge(m_editor->viewport());
     connect(m_session, &QuerySession::statementSucceeded, this, &QueryTab::onStatementSucceeded);
     connect(m_session, &QuerySession::schemaChanged, this, &QueryTab::onSchemaChanged);
     connect(m_connectionBar, &ConnectionBar::schemaChosen, this, &QueryTab::schemaSwitchRequested);
+}
+
+int QueryTab::beginActivity(const QString &text)
+{
+    return m_badge->begin(text);
+}
+
+void QueryTab::endActivity(int ticket)
+{
+    m_badge->end(ticket);
 }
 
 QString QueryTab::currentSchema() const

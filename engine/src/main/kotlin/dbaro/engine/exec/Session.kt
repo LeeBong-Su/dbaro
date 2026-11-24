@@ -211,10 +211,18 @@ class Session(val id: String, private val type: String, private val connection: 
         return mapOf("rows" to page.rows, "hasMore" to page.hasMore, "elapsedMs" to (System.nanoTime() - start) / 1_000_000)
     }
 
-    /** 예상 실행 계획. 문장은 실행하지 않는다. */
-    fun explain(sql: String): Map<String, Any?> {
+    /**
+     * 실행 계획. 보통은 예상 계획이라 문장을 실행하지 않는다.
+     * [actual]이면 문장을 실행해서 얻은 실제 계획이고, 바꾼 데이터는 되돌린다 ([ActualPlan]). 실행 중에는 cancel로 멈출 수 있다.
+     */
+    fun explain(sql: String, actual: Boolean = false, queryTimeoutSec: Int = 0): Map<String, Any?> {
         val start = System.nanoTime()
-        val plan = Explain.explain(type, connection, sql)
+        val plan = if (!actual) {
+            Explain.explain(type, connection, sql)
+        } else {
+            cancelRequested = false
+            ActualPlan.explain(type, connection, sql, queryTimeoutSec) { running = it }
+        }
         return plan + ("elapsedMs" to (System.nanoTime() - start) / 1_000_000)
     }
 

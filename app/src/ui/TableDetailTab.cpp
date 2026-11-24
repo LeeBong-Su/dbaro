@@ -1,5 +1,6 @@
 #include "TableDetailTab.h"
 
+#include "BusyIndicator.h"
 #include "MetadataService.h"
 #include "SqlHighlighter.h"
 #include "Theme.h"
@@ -106,6 +107,7 @@ TableDetailTab::TableDetailTab(MetadataService *metadata, const QString &connect
     layout->setContentsMargins(12, 10, 12, 0);
     layout->addLayout(header);
     layout->addWidget(m_pages, 1);
+    m_busy = new BusyOverlay(m_pages, this);
 
     m_title->setText(m_schema.isEmpty() ? m_name : m_schema + u'.' + m_name);
     refresh();
@@ -124,12 +126,14 @@ void TableDetailTab::refresh()
     if (m_schema.isEmpty() && !m_currentSchema.isEmpty())
         params.insert(QStringLiteral("currentSchema"), m_currentSchema);
     m_summary->setText(tr("Loading..."));
+    m_busy->start(tr("Reading the table"), m_schema.isEmpty() ? m_name : m_schema + u'.' + m_name);
     QPointer<TableDetailTab> self(this);
     m_metadata->request(
         m_connectionId, QStringLiteral("tableInfo"), params,
         [self](const QCborMap &table, const QString &error) {
             if (!self)
                 return;
+            self->m_busy->stop();
             if (!error.isEmpty()) {
                 self->m_error = error;
                 self->m_summary->setText(tr("Could not read the table: %1").arg(error));

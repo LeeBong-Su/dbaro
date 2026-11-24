@@ -34,7 +34,7 @@ CBOR는 JSON처럼 다루기 쉬운 바이너리 형식이다. Qt에 기본으�
 | `disconnect` | `sessionId` | |
 | `execute` | `sessionId`, `sql`, `pageSize`(기본 500), `queryTimeoutSec`, `binds`?: `[{value, type, out}]` | 아래 실행 결과. `binds`가 있으면 `sql`의 `?` 자리에 차례로 넣는다(`type`: VARCHAR, NUMERIC, CLOB). `out`이 있으면 CallableStatement로 실행해 그 자리를 OUT 파라미터로 받고, 결과 표 없이 `outBinds: [값...]`(OUT이 아닌 자리는 null)를 돌려준다 (CLI의 VARIABLE·EXEC) |
 | `fetch` | `sessionId`, `cursorId`, `count` | `rows`, `hasMore`, `elapsedMs`(이번 페이지를 읽은 시간) |
-| `explain` | `sessionId`, `sql` | 예상 실행 계획 (문장은 실행하지 않음). 아래 실행 계획 |
+| `explain` | `sessionId`, `sql`, `actual`(선택), `queryTimeoutSec`(선택) | 예상 실행 계획 (문장은 실행하지 않음). `actual`이면 실행해서 얻은 실제 계획 (바꾼 데이터는 되돌림, `cancel`로 멈춤). 아래 실행 계획 |
 | `ddl` | `sessionId`, `schema`(없으면 `currentSchema`, 그것도 없으면 현재 스키마), `name`, `schemaQuoted`, `nameQuoted`, `currentSchema`(쿼리 탭에서 바꾼 스키마) | `schema`, `name`, `type`, `script`. 아래 DDL |
 | `tableInfo` | `sessionId`, `schema`(없으면 `currentSchema`, 그것도 없으면 현재 스키마), `name`, `schemaQuoted`, `nameQuoted`, `currentSchema` | `schema`, `name`, `type`, `remarks`, `columns: [{name, type, typeName, numeric, temporal, nullable, primaryKey, default, remarks}]`, `primaryKey: [컬럼]`, `indexes: [{name, unique, columns}]`, `foreignKeys: [{name, columns, refSchema, refTable, refColumns}]`, `referencedBy: [{name, schema, table, columns, refColumns}]`. 이름은 DB 규칙대로 찾고(Oracle·Tibero는 시노님도 따라감) JDBC 메타데이터로 읽는다 |
 | `executeBatch` | `sessionId`, `statements: [문장]`, `stopOnError`(기본 true) | `executed`, `failed`, `skipped`, `affected`, `stoppedAt`, `cancelled`, `errors: [{index, message}]`(최대 100), `elapsedMs`. 문장을 하나씩 실행한다(실패 지점을 정확히 알리려고 JDBC 배치는 쓰지 않음). `cancel`을 받으면 다음 문장 앞에서 멈춘다. PostgreSQL 수동 커밋에서 계속하기면 문장마다 세이브포인트로 트랜잭션을 지킨다 |
@@ -77,6 +77,19 @@ DDL (`ddl`): 객체 본문에 코멘트, 인덱스, 트리거, 그 객체를 가
 - Oracle·Tibero: `EXPLAIN PLAN SET STATEMENT_ID = ... FOR`로 PLAN_TABLE에 넣고 읽은 뒤 지운다. Oracle은 `DBMS_XPLAN.DISPLAY` 글도 함께
 - PostgreSQL: `EXPLAIN (FORMAT JSON)`을 트리로, 기본 `EXPLAIN` 글도 함께
 - MySQL·MariaDB와 그 밖: `EXPLAIN` 결과 표 그대로 (MySQL 8은 `EXPLAIN FORMAT=TREE` 글도 함께). 결과가 한 컬럼뿐이면 글로 준다
+
+실제 실행 계획 (`explain`에 `actual: true`):
+
+- 문장을 실제로 실행한다. SELECT·WITH·VALUES·TABLE과 INSERT·UPDATE·DELETE·MERGE·REPLACE만 받고 나머지는 실행하지 않고 오류로 돌려준다
+- 트랜잭션 안에서 실행하고 되돌린다. 자동 커밋이면 잠시 꺼서 전부 되돌리고 다시 켜며, 수동 커밋이면 세이브포인트까지만 되돌려 그 전의 변경은 남긴다
+- 예상 계획의 모양에 더해 `actual: true`, `rolledBack`(DML이라 변경을 되돌렸음), `resultRows`(돌려준 행 수, Oracle은 바꾼 행 수도. 모르면 없음), `executionMs`(double), `planningMs`(PostgreSQL)
+- `actualRowsColumn`: 실제 행 수 컬럼 이름. 노드의 `rows: {estimated, actual}`(반복 전체 기준)로 앱이 예상과 크게 다른 단계를 칠한다
+- `textFirst`: 트리보다 글을 먼저 보인다 (Oracle 실제 계획. `DISPLAY_CURSOR`가 실패하면 그 이유를 글로 주고 false)
+- Oracle: 권한(`V$SESSION`, `V$SQL_PLAN_STATISTICS_ALL` 읽기)을 먼저 확인하고, `STATISTICS_LEVEL=ALL`로 실행해 결과 행을 모두 읽은 뒤 `V$SESSION.PREV_SQL_ID`로 커서를 찾는다. 트리는 `V$SQL_PLAN_STATISTICS_ALL`에서 `ALLSTATS LAST`와 같은 값(Starts, E-Rows, A-Rows, A-Time, Buffers, Reads, Writes, OMem, 1Mem, Used-Mem, Used-Tmp), 글은 `DBMS_XPLAN.DISPLAY_CURSOR(.., 'ADVANCED ALLSTATS LAST')`(Outline Data, Peeked Binds, Column Projection 등 포함. 앱은 글을 먼저 보인다). `STATISTICS_LEVEL`은 원래 값으로 돌린다
+- PostgreSQL: `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` (실제 행 수·시간은 반복 횟수를 곱한 전체, 버퍼, Rows Removed by Filter 등)
+- MySQL: `EXPLAIN ANALYZE`의 트리 글을 단계별로 나눈다 (예상 행 수, 실제 행 수, 반복, 시간, 비용). 글도 함께
+- MariaDB: `ANALYZE` 결과 표 (`r_rows`, `r_filtered`)
+- 그 밖(H2 등): `EXPLAIN ANALYZE` 글. Tibero는 아직 지원하지 않는다
 
 값: 정수 → 정수, 실수 → double, 불리언, NULL, NUMERIC/DECIMAL → 문자열(정밀도 유지), 날짜·시간 → `yyyy-MM-dd HH:mm:ss[.f]` 문자열, 바이너리 → 바이트열(최대 64KB), 긴 문자열·CLOB → 최대 64K 글자.
 

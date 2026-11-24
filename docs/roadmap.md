@@ -39,13 +39,16 @@
 - [x] SQL*Plus로 쓰던 운영 스크립트 호환
   SET 줄여 쓰기(`SET HEAD`), `SET HEADING OFF`·`PAGESIZE 0`, `ACCEPT ... PROMPT/DEFAULT/HIDE`, `VARIABLE`·`PRINT`·`:바인드`(엔진 위치 바인드, PL/SQL은 OUT으로 돌려받음), 스크립트 오류는 기본 계속(`WHENEVER SQLERROR EXIT`, `--stop-on-error`).
 
+- [x] 오래 걸리는 쿼리·F4 DDL·테이블 상세를 기다리는 동안 SQL 탭에 표시
+  0.4초가 넘으면 결과 영역에 카드(돌아가는 원호, 하는 일, 문장, 흐르는 시간, Cancel. 결과는 흐리게, Log·Output은 오른쪽 위에 작게), 탭 아이콘에 돌아가는 원호, F4는 에디터 오른쪽 위 알림.
+
 ## 2차개선
 
 - [ ] 리버스 엔지니어링 (DB 구조 → 모델·ERD·DDL 스크립트)
-- [ ] 외래 키(FK) 기반 JOIN 자동 완성 (`JOIN dept ON` 뒤에 FK 조건 제안)
+- [x] 외래 키(FK) 기반 JOIN 자동 완성 (`JOIN dept d ON ` 뒤에 `d.DEPT_ID = e.DEPT_ID`, `JOIN ` 뒤에 `DEPT d ON ...` 처럼 이어진 테이블까지. 양쪽 방향·여러 컬럼 키)
 - [ ] 이름 바꾸기 리팩토링: 테이블·컬럼 이름을 바꿀 때 그 객체를 참조하는 SQL 파일·뷰·프로시저를 찾아 함께 고친다
 - [ ] AI 에이전트형 DB 도구 (AI 모델 연결)
-- [ ] 실제 실행 계획 (실행해서 얻은 계획과 통계), 단축키 Alt+X
+- [x] 실제 실행 계획 (실행해서 얻은 계획과 통계), 단축키 Alt+X: Oracle `V$SQL_PLAN_STATISTICS_ALL`·`DISPLAY_CURSOR ADVANCED ALLSTATS LAST`, PostgreSQL `EXPLAIN ANALYZE`, MySQL `EXPLAIN ANALYZE`, MariaDB `ANALYZE`. DML은 실행 후 되돌림, 예상과 크게 다른 행 수는 칠함, Oracle은 ADVANCED ALLSTATS LAST 글을 먼저 보임. Tibero는 아직
 
 ## 그 밖의 후보
 

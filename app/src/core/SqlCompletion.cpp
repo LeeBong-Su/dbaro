@@ -149,7 +149,7 @@ const QSet<QString> &notAliases()
 }
 
 // FROM/JOIN/UPDATE/INTO 뒤의 테이블과 별칭을 모은다.
-QList<SqlTableRef> collectTables(const QList<Token> &tokens)
+QList<SqlTableRef> collectTables(const QList<Token> &tokens, const QString &statement)
 {
     QList<SqlTableRef> refs;
     const int n = int(tokens.size());
@@ -166,12 +166,16 @@ QList<SqlTableRef> collectTables(const QList<Token> &tokens)
             if (!first || !first->isName() || notAliases().contains(first->upper()))
                 break;
             QStringList parts{first->value};
+            const Token *last = first;
             ++j;
             while (at(j) && at(j)->is(u'.') && at(j + 1) && at(j + 1)->isName()) {
                 parts << at(j + 1)->value;
+                last = at(j + 1);
                 j += 2;
             }
             SqlTableRef ref;
+            ref.position = first->start;
+            ref.nameText = statement.mid(last->start, last->end - last->start);
             ref.name = parts.last();
             if (parts.size() >= 2)
                 ref.schema = parts.at(parts.size() - 2);
@@ -283,7 +287,19 @@ SqlCompletionContext SqlCompletion::analyze(const QString &statement, int cursor
     }
     const Token *previous = scanEnd > 0 ? &tokens[scanEnd - 1] : nullptr;
 
-    context.tables = collectTables(tokens);
+    context.tables = collectTables(tokens, statement);
+
+    // JOIN t [별칭] ON | : 방금 JOIN한 테이블 (ON 바로 앞에 나온 테이블)
+    if (previous && previous->upper() == u"ON" && context.qualifier.isEmpty()) {
+        for (int i = 0; i < context.tables.size(); ++i) {
+            const int position = context.tables[i].position;
+            if (position >= 0 && position < previous->start
+                && (context.joinTable < 0 || position > context.tables[context.joinTable].position))
+                context.joinTable = i;
+        }
+    }
+    // JOIN | : 테이블 이름 자리
+    context.afterJoin = previous && previous->upper() == u"JOIN" && context.qualifier.isEmpty();
 
     if (tableClauses().contains(clause)) {
         if (!context.qualifier.isEmpty())

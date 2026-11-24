@@ -9,6 +9,7 @@
 #include "cli/CliApp.h"
 #include "PlanObjectWindow.h"
 #include "BindDialog.h"
+#include "BusyIndicator.h"
 #include "EditorTabs.h"
 #include "FindBar.h"
 #include "HistoryDialog.h"
@@ -387,7 +388,15 @@ void MainWindow::createActions()
     m_explainAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_E));
     m_explainAction->setToolTip(
         withShortcut(tr("Estimated execution plan of the statement at the cursor (not executed)"), m_explainAction->shortcut()));
-    connect(m_explainAction, &QAction::triggered, this, &MainWindow::explainCurrent);
+    connect(m_explainAction, &QAction::triggered, this, [this] { explainCurrent(false); });
+
+    m_explainActualAction = new QAction(Icons::get(QStringLiteral("explain-actual")), tr("Actual Plan"), this);
+    m_explainActualAction->setShortcut(QKeySequence(Qt::ALT | Qt::Key_X));
+    m_explainActualAction->setToolTip(withShortcut(
+        tr("Run the statement at the cursor and show its actual execution plan with real row counts and times.\n"
+           "Changes made by INSERT, UPDATE, DELETE or MERGE are rolled back."),
+        m_explainActualAction->shortcut()));
+    connect(m_explainActualAction, &QAction::triggered, this, [this] { explainCurrent(true); });
 
     m_historyAction = new QAction(tr("Execution History..."), this);
     m_historyAction->setShortcuts({QKeySequence(Qt::Key_F8), QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_E)});
@@ -541,6 +550,7 @@ void MainWindow::createMenus()
     queryMenu->addAction(m_executeAction);
     queryMenu->addAction(m_executeScriptAction);
     queryMenu->addAction(m_explainAction);
+    queryMenu->addAction(m_explainActualAction);
     queryMenu->addAction(m_ddlAction);
     queryMenu->addAction(m_historyAction);
     queryMenu->addAction(m_exportAction);
@@ -590,6 +600,7 @@ void MainWindow::createToolBar()
     toolBar->addAction(m_executeAction);
     toolBar->addAction(m_executeScriptAction);
     toolBar->addAction(m_explainAction);
+    toolBar->addAction(m_explainActualAction);
     toolBar->addAction(m_cancelAction);
     toolBar->addSeparator();
 
@@ -968,6 +979,44 @@ ConsoleTab *MainWindow::openConsole()
     return console;
 }
 
+void MainWindow::updateBusyTab(QueryTab *tab)
+{
+    const bool busy = tab->session()->isBusy();
+    if (busy && !m_busyTabs.contains(tab)) {
+        QElapsedTimer clock;
+        clock.start();
+        m_busyTabs.insert(tab, clock);
+        if (!m_busyTabTimer) {
+            m_busyTabTimer = new QTimer(this);
+            m_busyTabTimer->setInterval(80);
+            connect(m_busyTabTimer, &QTimer::timeout, this, &MainWindow::animateBusyTabs);
+        }
+        m_busyTabTimer->start();
+    } else if (!busy && m_busyTabs.remove(tab)) {
+        const int index = m_tabs->indexOf(tab);
+        if (index >= 0)
+            m_tabs->setTabIcon(index, QIcon());
+    }
+}
+
+void MainWindow::animateBusyTabs()
+{
+    if (m_busyTabs.isEmpty()) {
+        m_busyTabTimer->stop();
+        return;
+    }
+    m_busyTabAngle = (m_busyTabAngle + 30) % 360;
+    const int size = m_tabs->tabBar()->iconSize().height() > 0 ? m_tabs->tabBar()->iconSize().height() : 16;
+    const QIcon icon(BusySpinner::frame(size, m_busyTabAngle, palette().color(QPalette::Link), devicePixelRatioF()));
+    for (auto it = m_busyTabs.cbegin(); it != m_busyTabs.cend(); ++it) {
+        if (it.value().elapsed() < 400)
+            continue; // 금방 끝나는 실행은 깜빡이지 않게
+        const int index = m_tabs->indexOf(it.key());
+        if (index >= 0)
+            m_tabs->setTabIcon(index, icon);
+    }
+}
+
 QueryTab *MainWindow::addQueryTab()
 {
     // 탭은 모두 이 창의 연결을 쓴다 (세션은 탭마다 따로 연다).
@@ -979,11 +1028,13 @@ QueryTab *MainWindow::addQueryTab()
             updateCursorPosition(line, column);
     });
     connect(tab->session(), &QuerySession::stateChanged, this, [this, tab] {
+        updateBusyTab(tab);
         if (tab == currentQueryTab()) {
             updateConnectionStatus();
             updateActionStates();
         }
     });
+    connect(tab, &QObject::destroyed, this, [this, tab] { m_busyTabs.remove(tab); });
     connect(tab->editor(), &QPlainTextEdit::textChanged, this, &MainWindow::scheduleWorkspaceSave);
     connect(tab->editor(), &SqlEditor::wordMarksChanged, this, [this](const QString &word, int count) {
         if (word.isEmpty())
@@ -1129,14 +1180,15 @@ void MainWindow::executeCurrent(bool wholeScript)
     });
 }
 
-void MainWindow::explainCurrent()
+void MainWindow::explainCurrent(bool actual)
 {
     QueryTab *tab = currentQueryTab();
     if (!tab || tab->session()->isBusy())
         return;
     ResultPanel *results = tab->resultPanel();
 
-    // 커서가 있는 문장(선택 영역이 있으면 그 안의 첫 문장)의 예상 계획. 문장은 실행하지 않는다.
+    // 커서가 있는 문장(선택 영역이 있으면 그 안의 첫 문장)의 계획.
+    // 예상 계획은 문장을 실행하지 않고, 실제 계획(actual)은 실행한 뒤 바꾼 데이터를 되돌린다.
     const QList<SqlStatement> statements = tab->editor()->statementsToExecute(false);
     if (statements.isEmpty()) {
         results->appendLog(tr("Nothing to explain."));
@@ -1153,9 +1205,9 @@ void MainWindow::explainCurrent()
         return;
     const SqlStatement statement = first.first();
     QPointer<QuerySession> guard(tab->session());
-    withConnectedSession(tab, [guard, statement] {
+    withConnectedSession(tab, [guard, statement, actual] {
         if (guard)
-            guard->explain(statement);
+            guard->explain(statement, actual);
     });
 }
 
@@ -1550,10 +1602,14 @@ void MainWindow::requestDdl(const QString &connectionId, const QString &schema, 
     const QString display = schema.isEmpty() ? name : schema + u'.' + name;
     statusBar()->showMessage(tr("Generating DDL for %1 ...").arg(display));
     QPointer<QueryTab> origin(source);
+    // 오래 걸리면 F4를 누른 탭의 에디터 오른쪽 위에 기다리는 중임을 보인다
+    const int ticket = source ? source->beginActivity(tr("Generating DDL for %1...").arg(display)) : 0;
     // DDL은 메타데이터 세션에서 만든다 (탭에서 쿼리가 실행 중이어도 된다). 늘 새로 읽는다.
     m_app->metadata()->request(
         connectionId, QStringLiteral("ddl"), params,
-        [this, origin, connectionId, display](const QCborMap &result, const QString &error) {
+        [this, origin, ticket, connectionId, display](const QCborMap &result, const QString &error) {
+            if (origin && ticket)
+                origin->endActivity(ticket);
             if (!error.isEmpty()) {
                 statusBar()->showMessage(tr("Could not generate the DDL of %1.").arg(display), 8000);
                 if (origin) {
@@ -1814,6 +1870,7 @@ void MainWindow::updateActionStates()
     m_executeAction->setEnabled(tab && !busy);
     m_executeScriptAction->setEnabled(tab && !busy);
     m_explainAction->setEnabled(tab && !busy);
+    m_explainActualAction->setEnabled(tab && !busy);
     m_ddlAction->setEnabled(true); // 탭이 없어도 탐색기에서 쓸 수 있다
     m_cancelAction->setEnabled(session && session->isBusy());
     m_commitAction->setEnabled(connected && manual && !busy);

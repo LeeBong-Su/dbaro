@@ -23,7 +23,8 @@
 namespace {
 
 enum Role { InsertRole = Qt::UserRole + 1, DetailRole, CaretBackRole };
-enum Kind { ColumnKind, KeyColumnKind, AliasKind, TableKind, ViewKind, SchemaKind, FunctionKind, RoutineKind, ObjectKind, KeywordKind };
+enum Kind { ColumnKind, KeyColumnKind, AliasKind, TableKind, ViewKind, SchemaKind, FunctionKind, RoutineKind, ObjectKind, KeywordKind,
+            JoinKind };
 
 constexpr int kMaxItems = 300;
 constexpr qint64 kRetryAfterMs = 30'000;
@@ -37,7 +38,8 @@ QIcon iconFor(int kind)
 {
     switch (kind) {
     case ColumnKind: return Icons::get(QStringLiteral("column"));
-    case KeyColumnKind: return Icons::get(QStringLiteral("key"));
+    case KeyColumnKind:
+    case JoinKind: return Icons::get(QStringLiteral("key"));
     case AliasKind:
     case TableKind: return Icons::get(QStringLiteral("table"));
     case ViewKind: return Icons::get(QStringLiteral("view"));
@@ -124,6 +126,45 @@ QCborMap params(std::initializer_list<std::pair<QString, QString>> items)
     return map;
 }
 
+QStringList strings(const QCborValue &list)
+{
+    QStringList items;
+    for (const QCborValue &value : list.toArray())
+        items << value.toString();
+    return items;
+}
+
+// 외래 키 쪽이 가리키는 테이블이 문장의 그 테이블인지 (대소문자 무시, 스키마는 둘 다 있을 때만 비교)
+bool sameTable(const QString &schema, const QString &table, const SqlTableRef &ref)
+{
+    if (table.compare(ref.name, Qt::CaseInsensitive) != 0)
+        return false;
+    return schema.isEmpty() || ref.schema.isEmpty() || schema.compare(ref.schema, Qt::CaseInsensitive) == 0;
+}
+
+// 테이블 이름으로 만든 짧은 별칭: DEPT → d, ORDER_ITEMS → oi (문장에 이미 있는 이름은 피한다)
+QString makeAlias(const QString &table, const SqlCompletionContext &context)
+{
+    QString alias;
+    for (const QString &part : table.split(u'_', Qt::SkipEmptyParts)) {
+        if (part.at(0).isLetter())
+            alias += part.at(0).toLower();
+    }
+    if (alias.isEmpty())
+        alias = QStringLiteral("t");
+    const auto taken = [&](const QString &name) {
+        for (const SqlTableRef &ref : context.tables) {
+            if (ref.alias.compare(name, Qt::CaseInsensitive) == 0 || (ref.alias.isEmpty() && ref.name.compare(name, Qt::CaseInsensitive) == 0))
+                return true;
+        }
+        return false;
+    };
+    QString candidate = alias;
+    for (int n = 2; taken(candidate); ++n)
+        candidate = alias + QString::number(n);
+    return candidate;
+}
+
 } // namespace
 
 SqlCompleter::SqlCompleter(SqlEditor *editor)
@@ -202,6 +243,7 @@ QStringList SqlCompleter::suggestions() const
 void SqlCompleter::hide()
 {
     m_explicit = false;
+    m_joinOnly = false;
     m_waitingForMetadata = false;
     m_completer->popup()->hide();
 }
@@ -246,12 +288,22 @@ void SqlCompleter::keyPressAfter(QKeyEvent *event)
     }
 
     const QString text = event->text();
-    const bool typing = !text.isEmpty() && !(event->modifiers() & (Qt::ControlModifier | Qt::AltModifier))
+    const bool plain = !(event->modifiers() & (Qt::ControlModifier | Qt::AltModifier));
+    const bool typing = !text.isEmpty() && plain
                         && (isWordChar(text.at(0)) || text.at(0) == u'.' || text.at(0) == u'"' || text.at(0) == u'`');
-    if (typing)
+    if (typing) {
+        m_joinOnly = false; // 글자를 치기 시작하면 보통 목록 (외래 키 제안은 그대로 맨 위)
         update(m_explicit && isPopupVisible());
-    else
+    } else if (text == QStringLiteral(" ") && plain) {
+        // "ON ", "JOIN " 다음: 외래 키로 잇는 조건·테이블이 있으면 목록을 연다
         hide();
+        m_joinOnly = true;
+        update(false);
+        if (!isPopupVisible() && !m_waitingForMetadata)
+            m_joinOnly = false;
+    } else {
+        hide();
+    }
 }
 
 void SqlCompleter::trigger(bool explicitRequest)
@@ -272,7 +324,11 @@ void SqlCompleter::update(bool explicitRequest)
     int start = 0;
     int end = cursor;
     for (const SqlStatement &statement : m_editor->statements()) {
-        if (statement.start <= cursor && cursor <= statement.end) {
+        // 구분자 없는 문장의 끝 공백 뒤("... ON |")도 그 문장이다
+        const bool inside = cursor <= statement.end
+                            || (cursor <= statement.terminatorEnd
+                                && QStringView(document).mid(statement.end, cursor - statement.end).trimmed().isEmpty());
+        if (statement.start <= cursor && inside) {
             start = statement.start;
             end = qMax(statement.end, cursor);
             break;
@@ -284,10 +340,16 @@ void SqlCompleter::update(bool explicitRequest)
     m_context = SqlCompletion::analyze(document.mid(start, end - start), cursor - start, m_editor->dialect());
 
     const SqlCompletionContext &context = m_context;
+    // ON·JOIN 바로 뒤(띄어쓰기로 연 목록): 외래 키로 잇는 제안이 있을 때만
+    const bool joinSpot = context.qualifier.isEmpty() && context.prefix.isEmpty() && (context.joinTable >= 0 || context.afterJoin);
+    if (m_joinOnly && !joinSpot) {
+        hide();
+        return;
+    }
     const bool wanted = explicitRequest || isPopupVisible() || context.prefix.size() >= 2 || !context.qualifier.isEmpty()
-                        || (context.kind == SqlCompletionContext::Kind::Table && !context.prefix.isEmpty());
+                        || (context.kind == SqlCompletionContext::Kind::Table && !context.prefix.isEmpty()) || m_joinOnly;
     if (context.kind == SqlCompletionContext::Kind::None || !wanted
-        || (!explicitRequest && context.prefix.isEmpty() && context.qualifier.isEmpty())) {
+        || (!explicitRequest && !m_joinOnly && context.prefix.isEmpty() && context.qualifier.isEmpty())) {
         hide();
         return;
     }
@@ -370,7 +432,15 @@ QList<SqlCompleter::Item> SqlCompleter::collect(const SqlCompletionContext &cont
     QList<Item> items;
     using Kind = SqlCompletionContext::Kind;
 
-    if (!context.qualifier.isEmpty()) {
+    // 외래 키로 JOIN 잇기 (맨 위)
+    if (context.qualifier.isEmpty() && context.joinTable >= 0)
+        addJoinConditions(items, context, -1);
+    else if (context.qualifier.isEmpty() && context.afterJoin)
+        addJoinTables(items, context, -1);
+
+    if (m_joinOnly) {
+        // 띄어쓰기로 연 목록은 외래 키 제안만
+    } else if (!context.qualifier.isEmpty()) {
         if (!context.outerQualifier.isEmpty()) {
             addColumns(items, context.outerQualifier, context.qualifier, 0); // schema.table.|
         } else if (context.kind == Kind::Table) {
@@ -502,6 +572,128 @@ void SqlCompleter::addColumns(QList<Item> &items, const QString &schemaName, con
         const bool key = column.value(QStringLiteral("primaryKey")).toBool();
         const QString detail = QStringLiteral("%1 · %2").arg(column.value(QStringLiteral("type")).toString(), table);
         items.append({name, SqlIdentifiers::quote(name, dialect), detail, key ? KeyColumnKind : ColumnKind, group, 0});
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 외래 키로 JOIN 잇기
+
+std::optional<QCborMap> SqlCompleter::tableInfo(const QString &schemaName, const QString &tableName)
+{
+    const QString schema = schemaName.isEmpty() ? currentSchema() : actualSchema(schemaName);
+    if (schema.isEmpty())
+        return std::nullopt;
+    const QString table = actualTable(schema, tableName);
+    if (table.isEmpty())
+        return std::nullopt;
+    const QString key = schema + u'.' + table;
+    if (m_failedTables.contains(key) || !metadataAvailable())
+        return std::nullopt;
+    QCborMap request = params({{QStringLiteral("schema"), schema}, {QStringLiteral("name"), table}});
+    request.insert(QStringLiteral("schemaQuoted"), true);
+    request.insert(QStringLiteral("nameQuoted"), true);
+    if (std::optional<QCborMap> hit = m_metadata->cached(m_connectionId, QStringLiteral("tableInfo"), request))
+        return hit;
+    m_waitingForMetadata = true;
+    if (!m_metadata->isLoading(m_connectionId, QStringLiteral("tableInfo"), request)) {
+        QPointer<SqlCompleter> self(this);
+        m_metadata->request(
+            m_connectionId, QStringLiteral("tableInfo"), request,
+            [self, key](const QCborMap &, const QString &error) {
+                if (self && !error.isEmpty())
+                    self->m_failedTables.insert(key); // 뷰가 아닌 객체 등: 이 테이블만 건너뛴다
+            },
+            false);
+    }
+    return m_metadata->cached(m_connectionId, QStringLiteral("tableInfo"), request);
+}
+
+namespace {
+
+// "l.A = r.X AND l.B = r.Y"
+QString joinCondition(const QString &left, const QStringList &leftColumns, const QString &right, const QStringList &rightColumns,
+                      SqlDialect dialect)
+{
+    QStringList parts;
+    for (qsizetype i = 0; i < leftColumns.size() && i < rightColumns.size(); ++i)
+        parts << QStringLiteral("%1.%2 = %3.%4")
+                     .arg(left, SqlIdentifiers::quote(leftColumns[i], dialect), right, SqlIdentifiers::quote(rightColumns[i], dialect));
+    return parts.join(QStringLiteral(" AND "));
+}
+
+} // namespace
+
+void SqlCompleter::addJoinConditions(QList<Item> &items, const SqlCompletionContext &context, int group)
+{
+    // JOIN 한 테이블과 그 앞의 테이블을 외래 키(양쪽 방향)로 잇는 조건
+    const SqlTableRef &joined = context.tables[context.joinTable];
+    const std::optional<QCborMap> info = tableInfo(joined.schema, joined.name);
+    if (!info)
+        return;
+    const SqlDialect dialect = m_editor->dialect();
+    const QString joinedName = joined.qualifier();
+    for (int i = 0; i < context.tables.size(); ++i) {
+        const SqlTableRef &other = context.tables[i];
+        if (i == context.joinTable || other.position < 0 || other.position >= joined.position)
+            continue;
+        const QString otherName = other.qualifier();
+        for (const QCborValue &value : info->value(QStringLiteral("foreignKeys")).toArray()) {
+            const QCborMap key = value.toMap();
+            if (!sameTable(key.value(QStringLiteral("refSchema")).toString(), key.value(QStringLiteral("refTable")).toString(), other))
+                continue;
+            const QString condition = joinCondition(joinedName, strings(key.value(QStringLiteral("columns"))), otherName,
+                                                    strings(key.value(QStringLiteral("refColumns"))), dialect);
+            items.append({condition, condition, tr("FK %1").arg(key.value(QStringLiteral("name")).toString()), JoinKind, group, 0});
+        }
+        for (const QCborValue &value : info->value(QStringLiteral("referencedBy")).toArray()) {
+            const QCborMap key = value.toMap();
+            if (!sameTable(key.value(QStringLiteral("schema")).toString(), key.value(QStringLiteral("table")).toString(), other))
+                continue;
+            const QString condition = joinCondition(joinedName, strings(key.value(QStringLiteral("refColumns"))), otherName,
+                                                    strings(key.value(QStringLiteral("columns"))), dialect);
+            items.append({condition, condition, tr("FK %1").arg(key.value(QStringLiteral("name")).toString()), JoinKind, group, 0});
+        }
+    }
+}
+
+void SqlCompleter::addJoinTables(QList<Item> &items, const SqlCompletionContext &context, int group)
+{
+    // 앞의 테이블과 외래 키로 이어진 테이블: "DEPT d ON d.DEPT_ID = e.DEPT_ID"
+    const SqlDialect dialect = m_editor->dialect();
+    const QString current = currentSchema();
+    const auto targetText = [&](const QString &schema, const QString &table, const SqlTableRef &from) {
+        // 지금 스키마(또는 앞 테이블과 같은 스키마)가 아니면 스키마를 붙인다
+        const bool sameSchema = schema.isEmpty() || schema.compare(current, Qt::CaseInsensitive) == 0
+                                || (!from.schema.isEmpty() && schema.compare(from.schema, Qt::CaseInsensitive) == 0);
+        return sameSchema ? SqlIdentifiers::quote(table, dialect) : SqlIdentifiers::qualified(schema, table, dialect);
+    };
+    for (const SqlTableRef &from : context.tables) {
+        if (from.position < 0 || from.position >= context.prefixStart)
+            continue; // 지금 쓰는 이름이나 뒤에 나오는 테이블
+        const std::optional<QCborMap> info = tableInfo(from.schema, from.name);
+        if (!info)
+            continue;
+        const QString fromName = from.qualifier();
+        for (const QCborValue &value : info->value(QStringLiteral("foreignKeys")).toArray()) {
+            const QCborMap key = value.toMap();
+            const QString table = key.value(QStringLiteral("refTable")).toString();
+            const QString alias = makeAlias(table, context);
+            const QString text = QStringLiteral("%1 %2 ON %3")
+                                     .arg(targetText(key.value(QStringLiteral("refSchema")).toString(), table, from), alias,
+                                          joinCondition(alias, strings(key.value(QStringLiteral("refColumns"))), fromName,
+                                                        strings(key.value(QStringLiteral("columns"))), dialect));
+            items.append({text, text, tr("FK %1").arg(key.value(QStringLiteral("name")).toString()), JoinKind, group, 0});
+        }
+        for (const QCborValue &value : info->value(QStringLiteral("referencedBy")).toArray()) {
+            const QCborMap key = value.toMap();
+            const QString table = key.value(QStringLiteral("table")).toString();
+            const QString alias = makeAlias(table, context);
+            const QString text = QStringLiteral("%1 %2 ON %3")
+                                     .arg(targetText(key.value(QStringLiteral("schema")).toString(), table, from), alias,
+                                          joinCondition(alias, strings(key.value(QStringLiteral("columns"))), fromName,
+                                                        strings(key.value(QStringLiteral("refColumns"))), dialect));
+            items.append({text, text, tr("FK %1").arg(key.value(QStringLiteral("name")).toString()), JoinKind, group, 0});
+        }
     }
 }
 

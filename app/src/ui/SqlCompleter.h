@@ -6,6 +6,7 @@
 #include <QElapsedTimer>
 #include <QObject>
 #include <QPointer>
+#include <QSet>
 #include <QStringList>
 
 #include <optional>
@@ -25,6 +26,9 @@ class SqlEditor;
 // - 메타데이터는 MetadataService 캐시에서 꺼내고, 없으면 뒤에서 가져와 목록을 새로 그린다
 //   (비밀번호를 묻지 않는다: 저장했거나 이미 입력한 연결만).
 // - Enter/Tab으로 넣고, Esc로 닫는다. 키워드·함수는 입력한 글자의 대소문자를 따른다.
+// - 외래 키로 JOIN 잇기: "JOIN dept d ON " 뒤에는 앞의 테이블과 외래 키로 이은 조건(d.DEPT_ID = e.DEPT_ID)을,
+//   "JOIN " 뒤에는 앞의 테이블과 외래 키로 이어진 테이블을 별칭·ON 조건까지(DEPT d ON d.DEPT_ID = e.DEPT_ID) 맨 위에 제안한다.
+//   ON·JOIN 다음에 띄어쓰면 이런 제안이 있을 때만 목록이 저절로 열린다. 외래 키는 엔진 tableInfo로 읽어 캐시한다.
 class SqlCompleter : public QObject
 {
     Q_OBJECT
@@ -67,6 +71,10 @@ private:
     void addFunctions(QList<Item> &items, const QString &prefix, int group);
     void addObjects(QList<Item> &items, const QString &schema, int group);
     void addColumns(QList<Item> &items, const QString &schema, const QString &table, int group);
+    void addJoinConditions(QList<Item> &items, const SqlCompletionContext &context, int group);
+    void addJoinTables(QList<Item> &items, const SqlCompletionContext &context, int group);
+    // 테이블의 외래 키 (tableInfo). 아직 모르면 가져오기를 시작하고 빈 값
+    std::optional<QCborMap> tableInfo(const QString &schema, const QString &table);
 
     // 캐시에서 꺼내기. 없으면 가져오기를 시작하고 빈 값을 돌려준다.
     QStringList schemas();
@@ -86,5 +94,7 @@ private:
     SqlCompletionContext m_context; // 마지막으로 분석한 문맥
     bool m_explicit = false;        // Ctrl+Space로 연 목록 (빈 접두어에도 유지)
     bool m_waitingForMetadata = false;
+    bool m_joinOnly = false;        // ON·JOIN 뒤에 띄어써서 연 목록: 외래 키 제안만
+    QSet<QString> m_failedTables;   // tableInfo를 읽지 못한 테이블 (다시 묻지 않는다)
     QElapsedTimer m_failedAt;       // 메타데이터 가져오기에 실패하면 잠시 다시 시도하지 않는다
 };

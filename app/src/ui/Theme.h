@@ -19,5 +19,6 @@ QColor currentMatchColor(); // 찾은 것 중 지금 고른 것의 바탕
 QColor editedCellColor();   // 결과 편집: 고친 셀
 QColor insertedRowColor();  // 결과 편집: 추가한 행
 QColor deletedRowColor();   // 결과 편집: 지울 행
+QColor warningTextColor();  // 눈여겨볼 값 (실제 계획에서 예상과 크게 다른 행 수)
 
 } // namespace Theme

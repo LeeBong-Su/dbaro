@@ -8,6 +8,7 @@
 #include <QPointer>
 #include <QWidget>
 
+class BusyBadge;
 class ConnectionBar;
 class EngineClient;
 class FindBar;
@@ -70,6 +71,11 @@ public:
     void setConnectionProfile(const ConnectionProfile *profile);
     ConnectionBar *connectionBar() const { return m_connectionBar; }
 
+
+    // 이 탭에서 기다리는 일(F4 DDL 등)을 에디터 오른쪽 위에 보인다. begin이 돌려준 번호로 end
+    int beginActivity(const QString &text);
+    void endActivity(int ticket);
+    BusyBadge *activityBadge() const { return m_badge; }
 signals:
     void cursorPositionChanged(int line, int column);
     void schemaSwitchRequested(const QString &schema); // 연결 정보 막대에서 다른 스키마를 골랐다
@@ -97,4 +103,5 @@ private:
     ResultPanel *m_results = nullptr;
     QSplitter *m_splitter = nullptr;
     QuerySession *m_session = nullptr;
+    BusyBadge *m_badge = nullptr;
 };

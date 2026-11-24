@@ -7,6 +7,7 @@
 #include <QElapsedTimer>
 #include <QTabWidget>
 
+class BusyOverlay;
 class PlanView;
 class QAction;
 class QLabel;
@@ -49,6 +50,9 @@ public:
     void showResult();
 
     void setRunning(bool running);
+    // 실행 중 표시에 보일 하는 일과 문장
+    void setActivity(const QString &title, const QString &detail);
+    BusyOverlay *busyOverlay() const { return m_busy; }
     void showExecutionInfo(const ExecutionInfo &info);
     void showPlan(const QCborMap &plan);
 
@@ -93,6 +97,7 @@ signals:
     void editRequested();
     void applyEditsRequested(const QStringList &statements);
     void planObjectRequested(const QCborMap &object); // 실행 계획에서 오퍼레이션을 눌렀다
+    void cancelRequested(); // 실행 중 표시의 Cancel
 
 protected:
     void resizeEvent(QResizeEvent *event) override;
@@ -143,6 +148,9 @@ private:
     PlanView *m_plan = nullptr;
     QLabel *m_info = nullptr;
     QTimer *m_runningTimer = nullptr;
+    BusyOverlay *m_busy = nullptr;
+    QString m_activityTitle;
+    QString m_activityDetail;
     QElapsedTimer m_runClock;
     bool m_running = false;
     bool m_infoDuringRun = false;

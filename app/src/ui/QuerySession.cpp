@@ -128,6 +128,7 @@ void QuerySession::setSchema(const QString &schema, std::function<void(bool)> do
             done(false);
         return;
     }
+    setActivity(tr("Switching the schema to %1").arg(schema));
     setBusy(true);
     QPointer<QuerySession> self(this);
     m_engine->request(QStringLiteral("setSchema"),
@@ -214,6 +215,7 @@ void QuerySession::run(const QList<SqlStatement> &statements, int pageSize, int 
     m_done = 0;
     m_pageSize = pageSize;
     m_queryTimeoutSec = queryTimeoutSec;
+    setActivity(m_total > 1 ? tr("Running statement 1 of %1").arg(m_total) : tr("Running the query"), statements.first().text);
     setBusy(true);
     runNext();
 }
@@ -226,6 +228,8 @@ void QuerySession::runNext()
     }
 
     const SqlStatement statement = m_queue.takeFirst();
+    setActivity(m_total > 1 ? tr("Running statement %1 of %2").arg(m_done + 1).arg(m_total) : tr("Running the query"),
+                statement.text);
     // 실행하는 문장을 먼저 로그에 남긴다 (오래 걸리는 문장도 무엇이 실행 중인지 보인다).
     emit message(statementForLog(QStringLiteral("[%1/%2] SQL> ").arg(m_done + 1).arg(m_total), statement.text), false);
     QPointer<QuerySession> self(this);
@@ -414,6 +418,7 @@ void QuerySession::executeBatch(const QStringList &statements, bool stopOnError,
         done({}, EngineError::of(tr("The tab is not connected or is busy.")));
         return;
     }
+    setActivity(tr("Running %n statement(s)", nullptr, int(statements.size())), statements.value(0));
     setBusy(true);
     QCborArray list;
     for (const QString &sql : statements)
@@ -434,16 +439,19 @@ void QuerySession::executeBatch(const QStringList &statements, bool stopOnError,
                       });
 }
 
-void QuerySession::explain(const SqlStatement &statement)
+void QuerySession::explain(const SqlStatement &statement, bool actual)
 {
     if (!isConnected() || m_busy || !m_engine)
         return;
+    setActivity(actual ? tr("Running the statement for its actual plan") : tr("Getting the estimated plan"), statement.text);
     setBusy(true);
-    emit message(statementForLog(QStringLiteral("EXPLAIN> "), statement.text), false);
+    emit message(statementForLog(actual ? QStringLiteral("EXPLAIN ANALYZE> ") : QStringLiteral("EXPLAIN> "), statement.text), false);
     QPointer<QuerySession> self(this);
-    m_engine->request(QStringLiteral("explain"),
-                      params({{QStringLiteral("sessionId"), m_sessionId}, {QStringLiteral("sql"), statement.text}}),
-                      [self, statement](const QCborMap &result, const EngineError &error) {
+    QCborMap request = params({{QStringLiteral("sessionId"), m_sessionId}, {QStringLiteral("sql"), statement.text}});
+    if (actual)
+        request.insert(QStringLiteral("actual"), true);
+    m_engine->request(QStringLiteral("explain"), request,
+                      [self, statement, actual](const QCborMap &result, const EngineError &error) {
                           if (!self)
                               return;
                           self->setBusy(false);
@@ -457,10 +465,16 @@ void QuerySession::explain(const SqlStatement &statement)
                               return;
                           }
                           const qint64 elapsed = result.value(QStringLiteral("elapsedMs")).toInteger();
-                          emit self->message(tr("Estimated plan in %1 ms").arg(elapsed), false);
+                          if (!actual)
+                              emit self->message(tr("Estimated plan in %1 ms").arg(elapsed), false);
+                          else if (result.value(QStringLiteral("rolledBack")).toBool())
+                              emit self->message(tr("Actual plan in %1 ms. The statement ran and its changes were rolled back.").arg(elapsed), false);
+                          else
+                              emit self->message(tr("Actual plan in %1 ms. The statement ran.").arg(elapsed), false);
                           emit self->planReceived(result);
                           ExecutionInfo info;
                           info.kind = ExecutionInfo::Kind::Plan;
+                          info.actualPlan = actual;
                           info.executeMs = elapsed;
                           emit self->executionInfoChanged(info);
                       });
@@ -492,6 +506,15 @@ void QuerySession::markDisconnected(const QString &reason)
     setCurrentSchemaValue({});
     emit message(reason, true);
     emit stateChanged();
+}
+
+void QuerySession::setActivity(const QString &title, const QString &detail)
+{
+    if (m_activityTitle == title && m_activityDetail == detail)
+        return;
+    m_activityTitle = title;
+    m_activityDetail = detail;
+    emit activityChanged(title, detail);
 }
 
 void QuerySession::setBusy(bool busy)

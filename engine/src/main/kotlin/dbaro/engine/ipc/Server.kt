@@ -100,7 +100,9 @@ class Server(input: InputStream, output: OutputStream, private val drivers: Driv
             "commit" -> withSession(id, params) { it.commit(); emptyMap() }
             "rollback" -> withSession(id, params) { it.rollback(); emptyMap() }
             "setAutoCommit" -> withSession(id, params) { it.setAutoCommit(params.bool("autoCommit", false)); emptyMap() }
-            "explain" -> withSession(id, params) { it.explain(params.string("sql")) }
+            "explain" -> withSession(id, params) {
+                it.explain(params.string("sql"), params.bool("actual", false), params.int("queryTimeoutSec", 0))
+            }
             "ddl" -> withSession(id, params) {
                 it.ddl(
                     Ddl.Request(

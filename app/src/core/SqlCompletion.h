@@ -14,6 +14,11 @@ struct SqlTableRef
     QString schema; // 비어 있으면 현재 스키마
     QString name;
     QString alias;  // 없으면 빈 값
+    QString nameText; // 문장에 쓴 그대로의 테이블 이름 (따옴표 포함, 스키마 제외)
+    int position = -1; // 문장 안에서 이 테이블이 나온 곳 (스키마 포함 이름의 시작)
+
+    // 컬럼 앞에 붙일 이름: 별칭, 없으면 쓴 그대로의 테이블 이름
+    QString qualifier() const { return alias.isEmpty() ? nameText : alias; }
 };
 
 struct SqlCompletionContext
@@ -32,7 +37,12 @@ struct SqlCompletionContext
     QString qualifier;      // "x.|"의 x (따옴표를 뺀 이름). 없으면 빈 값
     QString outerQualifier; // "a.b.|"의 a
     QList<SqlTableRef> tables; // 문장에서 FROM/JOIN/UPDATE/INTO 뒤에 나온 테이블
+    // JOIN t ON | : 방금 JOIN한 테이블 (tables의 위치). 외래 키로 이은 조건을 제안한다. 아니면 -1
+    int joinTable = -1;
+    // JOIN | : 테이블 이름 자리. 앞의 테이블과 외래 키로 이어진 테이블을 ON 조건까지 제안한다
+    bool afterJoin = false;
 };
+
 
 namespace SqlCompletion {
 

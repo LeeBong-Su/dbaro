@@ -1,5 +1,6 @@
 #include "ResultPanel.h"
 
+#include "BusyIndicator.h"
 #include "ExportDialog.h"
 #include "PlanView.h"
 #include "ResultModel.h"
@@ -33,6 +34,7 @@
 #include <QTableView>
 #include <QTableWidget>
 #include <QTime>
+#include <QStackedWidget>
 #include <QTimer>
 #include <QToolBar>
 #include <QVBoxLayout>
@@ -227,7 +229,7 @@ ResultPanel::ResultPanel(QWidget *parent)
 
     m_plan = new PlanView(this);
     m_plan->setObjectName(QStringLiteral("resultPlan"));
-    m_plan->hide(); // 처음 Ctrl+E를 누를 때 탭으로 붙인다
+    m_plan->hide(); // 처음 Ctrl+E·Alt+X를 누를 때 탭으로 붙인다
     connect(m_plan, &PlanView::objectRequested, this, &ResultPanel::planObjectRequested);
 
     // 오른쪽 위: 행 수와 걸린 시간
@@ -240,6 +242,26 @@ ResultPanel::ResultPanel(QWidget *parent)
     m_runningTimer = new QTimer(this);
     m_runningTimer->setInterval(100);
     connect(m_runningTimer, &QTimer::timeout, this, &ResultPanel::updateRunningText);
+
+    // 오래 걸리면 결과·계획 화면을 흐리게 덮고 하는 일, 문장, 걸린 시간, Cancel을 보인다.
+    // Log·Output은 실행 중에도 줄이 계속 늘어나니 흐리게 덮지 않고 카드만 오른쪽 위에 둔다.
+    auto *pages = findChild<QStackedWidget *>(QString(), Qt::FindDirectChildrenOnly);
+    m_busy = new BusyOverlay(pages ? static_cast<QWidget *>(pages) : this, this);
+    connect(m_busy, &BusyOverlay::cancelRequested, this, [this] {
+        m_busy->cancelButton()->setEnabled(false);
+        m_busy->setText(tr("Cancelling..."), m_activityDetail);
+        emit cancelRequested();
+    });
+    connect(this, &QTabWidget::currentChanged, this,
+            [this] { m_busy->setCompact(currentWidget() == m_log || currentWidget() == m_output); });
+}
+
+void ResultPanel::setActivity(const QString &title, const QString &detail)
+{
+    m_activityTitle = title;
+    m_activityDetail = detail;
+    if (m_running && m_busy->cancelButton()->isEnabled())
+        m_busy->setText(title, detail);
 }
 
 void ResultPanel::createResultPage()
@@ -726,8 +748,12 @@ void ResultPanel::setRunning(bool running)
         m_runClock.start();
         m_runningTimer->start();
         updateRunningText();
+        m_busy->cancelButton()->setEnabled(true);
+        m_busy->setCompact(currentWidget() == m_log || currentWidget() == m_output);
+        m_busy->start(m_activityTitle.isEmpty() ? tr("Running...") : m_activityTitle, m_activityDetail, true);
         return;
     }
+    m_busy->stop();
     m_runningTimer->stop();
     if (m_infoDuringRun) {
         showExecutionInfo(m_lastInfo);
@@ -765,7 +791,7 @@ void ResultPanel::showExecutionInfo(const ExecutionInfo &info)
         text = tr("Affected rows: %1").arg(locale.toString(info.rows));
         break;
     case ExecutionInfo::Kind::Plan:
-        text = tr("Estimated plan");
+        text = info.actualPlan ? tr("Actual plan") : tr("Estimated plan");
         break;
     case ExecutionInfo::Kind::Other:
     case ExecutionInfo::Kind::None:

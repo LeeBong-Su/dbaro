@@ -20,6 +20,7 @@ struct ExecutionInfo
     bool hasMore = false;  // 아직 가져오지 않은 행이 남아 있음
     qint64 executeMs = 0;  // 문장 실행 시간
     qint64 fetchMs = 0;    // 행을 읽어 온 시간 (스크롤로 더 가져온 시간 포함)
+    bool actualPlan = false; // Plan: 실행해서 얻은 실제 계획
 
     qint64 totalMs() const { return executeMs + fetchMs; }
 };
@@ -59,14 +60,18 @@ public:
     void rollback();
     void setAutoCommit(bool autoCommit);
 
-    // 예상 실행 계획 (문장은 실행하지 않는다). 결과는 planReceived, 실패는 statementFailed.
-    void explain(const SqlStatement &statement);
+    // 실행 계획. 결과는 planReceived, 실패는 statementFailed.
+    // 보통은 예상 계획(문장은 실행하지 않음), actual이면 문장을 실행해서 얻은 실제 계획 (바꾼 데이터는 엔진이 되돌린다).
+    void explain(const SqlStatement &statement, bool actual = false);
     // 문장 여러 개를 한 번에 엔진으로 보내 차례로 실행한다 (데이터 불러오기, 결과 편집 반영).
     // 결과: executed, failed, skipped, affected, stoppedAt, cancelled, errors[{index, message}], elapsedMs
     void executeBatch(const QStringList &statements, bool stopOnError,
                       std::function<void(const QCborMap &result, const EngineError &error)> done);
 
     ExecutionInfo executionInfo() const { return m_info; }
+    // 바쁜 동안 하는 일 ("Running statement 2 of 5")과 그 문장. 실행 중 표시에 쓴다
+    QString activityTitle() const { return m_activityTitle; }
+    QString activityDetail() const { return m_activityDetail; }
 
 signals:
     void stateChanged(); // 연결·실행·트랜잭션 상태가 바뀜
@@ -81,6 +86,7 @@ signals:
     void executionInfoChanged(const ExecutionInfo &info);
     void planReceived(const QCborMap &plan);
     void schemaChanged(const QString &schema); // 지금 스키마가 바뀜 (끊기면 빈 값)
+    void activityChanged(const QString &title, const QString &detail); // 바쁜 동안 하는 일이 바뀜
 
 private:
     void runNext();
@@ -89,6 +95,7 @@ private:
     void closeCursor();
     void markDisconnected(const QString &reason);
     void setBusy(bool busy);
+    void setActivity(const QString &title, const QString &detail = {});
     void setPendingTransaction(bool pending);
     void setCurrentSchemaValue(const QString &schema);
     QString progress() const;
@@ -112,4 +119,6 @@ private:
     QString m_cursorId;
     bool m_fetching = false;
     ExecutionInfo m_info;
+    QString m_activityTitle;
+    QString m_activityDetail;
 };

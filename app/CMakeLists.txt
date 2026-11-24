@@ -60,6 +60,8 @@ qt_add_library(dbaro_lib STATIC
     src/ui/AppController.h
     src/ui/BindDialog.cpp
     src/ui/BindDialog.h
+    src/ui/BusyIndicator.cpp
+    src/ui/BusyIndicator.h
     src/ui/ConnectionBar.cpp
     src/ui/ConnectionBar.h
     src/ui/ConnectionDialog.cpp
@@ -135,6 +137,7 @@ qt_add_resources(dbaro_lib "icons"
         resources/icons/database.svg
         resources/icons/dbaro.svg
         resources/icons/explain.svg
+        resources/icons/explain-actual.svg
         resources/icons/folder.svg
         resources/icons/hide.svg
         resources/icons/key.svg

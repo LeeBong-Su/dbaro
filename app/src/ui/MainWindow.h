@@ -6,6 +6,8 @@
 #include "core/WorkspaceStore.h"
 
 #include <QCborMap>
+#include <QElapsedTimer>
+#include <QHash>
 #include <QList>
 #include <QMainWindow>
 #include <QPointer>
@@ -93,7 +95,7 @@ private:
     bool applyBindVariables(QueryTab *tab, QList<SqlStatement> *statements);
     void insertSql(QueryTab *tab, const QString &sql);
     void formatCurrent(); // 선택 영역(없으면 커서가 있는 문장)을 정렬한다
-    void explainCurrent();
+    void explainCurrent(bool actual);
     void useSchema(const QString &connectionId, const QString &schema); // 탐색기에서: 지금 탭의 스키마를 바꾼다
     void switchSchema(QueryTab *tab, const QString &schema);
     void showDdlAtCursor();
@@ -165,6 +167,13 @@ private:
     QAction *m_executeAction = nullptr;
     QAction *m_executeScriptAction = nullptr;
     QAction *m_explainAction = nullptr;
+    QAction *m_explainActualAction = nullptr;
+    // 실행 중인 탭: 탭 아이콘 자리에 돌아가는 원호 (오래 걸릴 때만)
+    QTimer *m_busyTabTimer = nullptr;
+    int m_busyTabAngle = 0;
+    QHash<QueryTab *, QElapsedTimer> m_busyTabs;
+    void updateBusyTab(QueryTab *tab);
+    void animateBusyTabs();
     QAction *m_ddlAction = nullptr;
     QAction *m_tableDetailsAction = nullptr;
     QAction *m_importAction = nullptr;

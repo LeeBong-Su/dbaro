@@ -287,3 +287,8 @@ QColor Theme::deletedRowColor()
 {
     return g_current == Kind::Dark ? QColor(0x4d, 0x26, 0x28) : QColor(0xfb, 0xdc, 0xdc);
 }
+
+QColor Theme::warningTextColor()
+{
+    return g_current == Kind::Dark ? QColor(0xf0, 0xa0, 0x4b) : QColor(0xb8, 0x4a, 0x00);
+}

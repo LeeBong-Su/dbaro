@@ -6,6 +6,7 @@
 #include <QPointer>
 #include <QWidget>
 
+class BusyOverlay;
 class MetadataService;
 class QLabel;
 class QPlainTextEdit;
@@ -29,6 +30,7 @@ public:
     bool isLoaded() const { return m_loaded; }
     QString errorText() const { return m_error; }
     QTabWidget *pages() const { return m_pages; }
+    BusyOverlay *busyOverlay() const { return m_busy; }
     void refresh();
 
 signals:
@@ -55,6 +57,7 @@ private:
     QLabel *m_title = nullptr;
     QLabel *m_summary = nullptr;
     QTabWidget *m_pages = nullptr;
+    BusyOverlay *m_busy = nullptr;
     QTableWidget *m_columns = nullptr;
     QTableWidget *m_indexes = nullptr;
     QTableWidget *m_foreignKeys = nullptr;
