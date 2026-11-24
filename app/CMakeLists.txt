@@ -166,6 +166,9 @@ if(WIN32)
     # SecretStore: Windows 자격 증명 관리자 (CredWriteW 등)
     # WindowsIntegration: 작업 표시줄 점프 목록(COM), 창 테두리 색(DWM)
     target_link_libraries(dbaro_lib PRIVATE Advapi32 Ole32 Shell32 Propsys Shlwapi Dwmapi User32)
+elseif(APPLE)
+    # SecretStore: 로그인 키체인 (SecItemAdd 등)
+    target_link_libraries(dbaro_lib PRIVATE "-framework Security" "-framework CoreFoundation")
 endif()
 
 qt_add_executable(dbaro
@@ -179,6 +182,20 @@ if(WIN32)
     set(DBARO_ICON_PATH "${CMAKE_CURRENT_SOURCE_DIR}/resources/dbaro.ico")
     configure_file(resources/dbaro.rc.in "${CMAKE_CURRENT_BINARY_DIR}/dbaro.rc" @ONLY)
     target_sources(dbaro PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/dbaro.rc")
+endif()
+
+if(APPLE)
+    # 앱 번들(DBaro.app) 아이콘과 Info.plist 값
+    set(DBARO_ICNS_PATH "${CMAKE_CURRENT_SOURCE_DIR}/resources/dbaro.icns")
+    set_source_files_properties("${DBARO_ICNS_PATH}" PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+    target_sources(dbaro PRIVATE "${DBARO_ICNS_PATH}")
+    set_target_properties(dbaro PROPERTIES
+        MACOSX_BUNDLE_BUNDLE_NAME "DBaro"
+        MACOSX_BUNDLE_GUI_IDENTIFIER "io.github.leebong-su.dbaro"
+        MACOSX_BUNDLE_ICON_FILE "dbaro.icns"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
+        MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
+    )
 endif()
 
 set_target_properties(dbaro PROPERTIES

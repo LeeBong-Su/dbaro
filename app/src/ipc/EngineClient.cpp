@@ -20,6 +20,18 @@
 
 namespace {
 
+// 배포본에서 runtime/, engine/을 찾을 폴더. Windows는 실행 파일 옆,
+// macOS 앱 번들은 Contents/MacOS 옆의 Contents/Resources.
+QString bundleDir()
+{
+#ifdef Q_OS_MACOS
+    const QDir resources(QCoreApplication::applicationDirPath() + QStringLiteral("/../Resources"));
+    if (resources.exists())
+        return resources.absolutePath();
+#endif
+    return QCoreApplication::applicationDirPath();
+}
+
 QString findJava()
 {
     const QString explicitJava = qEnvironmentVariable("DBARO_JAVA");
@@ -32,7 +44,7 @@ QString findJava()
     const QString executable = QStringLiteral("java");
 #endif
     // 배포본: 앱 옆의 runtime/ (jlink로 만든 Java 런타임). 사용자가 Java를 설치하지 않아도 된다.
-    const QString bundled = QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("runtime/bin/") + executable);
+    const QString bundled = QDir(bundleDir()).filePath(QStringLiteral("runtime/bin/") + executable);
     if (QFileInfo::exists(bundled))
         return bundled;
 
@@ -51,9 +63,11 @@ QString findEngineLib()
     if (!home.isEmpty() && QFileInfo::exists(QDir(home).filePath(QStringLiteral("lib"))))
         return QDir(home).filePath(QStringLiteral("lib"));
 
+    const QDir bundle(bundleDir());
+    if (QFileInfo::exists(bundle.filePath(QStringLiteral("engine/lib"))))
+        return bundle.filePath(QStringLiteral("engine/lib"));
+
     QDir dir(QCoreApplication::applicationDirPath());
-    if (QFileInfo::exists(dir.filePath(QStringLiteral("engine/lib"))))
-        return dir.filePath(QStringLiteral("engine/lib"));
 
     // 개발 중: 저장소의 engine/build/install/dbaro-engine/lib (./gradlew installDist)
     for (int level = 0; level < 8; ++level) {
