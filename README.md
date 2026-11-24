@@ -61,6 +61,30 @@ Windows 설치 방법은 [docs/dev-setup-windows.md](docs/dev-setup-windows.md)�
 - 새 버전 MSI를 설치하면 이전 버전을 대신한다. 제거해도 사용자 데이터(연결 정보, 비밀번호, 설정)는 남는다.
 - WiX는 v5를 쓴다. v6 이상은 매출 기준 유지보수 비용과 EULA 동의 조건이 있다.
 
+## 배포본 만들기 (macOS)
+
+Mac이 없으면 GitHub Actions로 만든다: Actions 탭 → **macOS package** → Run workflow (`mac-build` 브랜치에 push해도 돈다).
+끝나면 실행 화면의 Artifacts에서 `DBaro-macos-arm64`(DMG)를 받는다. 지금은 Apple Silicon(arm64)용만 만든다.
+
+Mac에서 직접 만들 때 (Xcode 명령줄 도구, CMake, Qt 6 macOS, JDK 21):
+
+```bash
+scripts/package-macos.sh --qt-dir ~/Qt/6.10.3/macos --run-tests
+```
+
+`dist/DBaro-<버전>-macos-arm64.dmg`가 만들어진다. 사용자 Mac에는 Java나 Qt를 설치할 필요가 없다.
+
+| 들어가는 것 | 내용 |
+|---|---|
+| `DBaro.app/Contents/MacOS/dbaro`, `dbaro-cli` | 앱, 명령줄 도구 |
+| `Contents/Frameworks`, `Contents/PlugIns` | Qt (`macdeployqt`로 수집) |
+| `Contents/Resources/engine/lib/*.jar`, `Contents/Resources/runtime/` | 엔진, `jlink`로 만든 Java 21 런타임 |
+| `Contents/Resources/THIRD_PARTY_NOTICES.md`, `BUILD-INFO.txt` | 제3자 라이선스 고지, 빌드에 쓴 버전 |
+| DMG의 `README.txt`, `Applications` 바로 가기 | 설치·처음 열기 안내 |
+
+- Apple 개발자 서명·공증이 없는 임시 서명(ad-hoc)이라, 처음 열 때 시스템 설정 > 개인정보 보호 및 보안에서 **그래도 열기**를 눌러야 한다.
+- 비밀번호는 로그인 키체인에 저장한다 (`DBaro/connection/...`).
+
 ## 문서
 
 - [아키텍처](docs/architecture.md)

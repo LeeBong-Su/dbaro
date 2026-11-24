@@ -56,7 +56,7 @@ DBaro는 Qt 6(C++) 앱과 Kotlin/JVM 엔진, 두 프로세스로 동작한다.
 | 항목 | 위치 | 비고 |
 |---|---|---|
 | 연결 목록 | OS 앱 데이터 폴더의 `connections.json` (Windows: `%APPDATA%\DBaro\DBaro\connections.json`) | 비밀번호는 넣지 않는다 |
-| 비밀번호 | OS 보안 저장소. Windows 자격 증명 관리자, 이름 `DBaro/connection/<연결 id>` | macOS 키체인, Linux libsecret은 아직 없음. 그 OS에서는 접속할 때마다 묻는다 |
+| 비밀번호 | OS 보안 저장소. Windows 자격 증명 관리자, macOS 로그인 키체인(서비스 `DBaro`), 이름 `DBaro/connection/<연결 id>` | Linux libsecret은 아직 없음. 그 OS에서는 접속할 때마다 묻는다 |
 
 연결마다 환경(개발, 테스트, 스테이징, 운영)을 지정한다. 환경 색상은 툴바, 탐색기, 쿼리 탭 위쪽의 연결 정보 막대에 표시되고, 운영 연결은 상태 표시줄에 `PRODUCTION`으로 나온다.
 

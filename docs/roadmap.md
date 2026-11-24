@@ -58,4 +58,4 @@
 - 실제 DB(Oracle Free, PostgreSQL, MariaDB 컨테이너)로 확인하는 환경
 - MSI 다시 빌드해서 설치 확인 (작업 표시줄 고정 아이콘·점프 목록)
 - 한국어 화면
-- macOS·Linux 빌드
+- Linux 빌드 (macOS는 GitHub Actions `macOS package`로 Apple Silicon DMG를 만든다. Intel Mac, Apple 서명·공증은 아직)

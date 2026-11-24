@@ -8,6 +8,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Qt 6.8 이상 (개발 PC는 6.10.3). LGPLv3로 쓰려면 동적 링크를 유지한다.
 find_package(Qt6 6.8 REQUIRED COMPONENTS Widgets Network Svg)
 # .xlsx(ZIP) 읽기에 Qt의 QZipReader를 쓴다 (Qt 비공개 API: Qt를 올릴 때 확인한다)
+# 배포본은 빌드한 Qt를 함께 넣으므로 비공개 모듈 경고는 끈다.
+set(QT_NO_PRIVATE_MODULE_WARNING ON)
 find_package(Qt6 6.8 REQUIRED COMPONENTS CorePrivate)
 qt_standard_project_setup()
 

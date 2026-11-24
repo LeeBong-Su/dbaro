@@ -137,7 +137,7 @@ engine_pid=$!
 ( sleep 30; kill "$engine_pid" 2>/dev/null ) &
 watchdog_pid=$!
 wait "$engine_pid" || true
-kill "$watchdog_pid" 2>/dev/null || true
+{ kill "$watchdog_pid"; wait "$watchdog_pid"; } 2>/dev/null || true
 if ! grep -a -q "$version" "$work/response.bin"; then
     cat "$work/engine.log" >&2
     fail 'The packaged engine did not answer the hello request.'
