@@ -71,4 +71,28 @@ class ExplainTest {
         assertFalse(Connector.connectionProperties("postgres", emptyMap(), 10).containsKey("v\$session.program"))
         assertTrue(Connector.connectionProperties("oracle", emptyMap(), 10).getProperty("remarksReporting") == "true")
     }
+    @Test
+    fun mysqlAliasesBecomeTableNames() {
+        val aliases = Explain.tableAliases(
+            "SELECT e.emp_name, o.amount /* FROM x y */ FROM emp e JOIN `orders` AS o ON o.emp_id = e.emp_id " +
+                "LEFT JOIN dbaro_hr.region r ON r.region_id = 1, product p " +
+                "WHERE o.status = 'FROM z w' AND EXISTS (SELECT 1 FROM order_item i WHERE i.order_id = o.order_id)",
+        )
+        assertEquals("emp", aliases["e"]?.second)
+        assertEquals("orders", aliases["o"]?.second)
+        assertEquals("dbaro_hr" to "region", aliases["r"])
+        assertEquals("dbaro_hr" to "region", aliases["region"])
+        assertEquals("product", aliases["p"]?.second)
+        assertEquals("order_item", aliases["i"]?.second)
+        assertFalse("y" in aliases || "w" in aliases || "amount" in aliases, aliases.toString())
+
+        val plan = Explain.withTableNames(
+            "SELECT * FROM orders o",
+            mapOf("nodes" to listOf(mapOf("object" to mapOf("schema" to null, "name" to "o", "type" to "TABLE", "index" to "orders_status_ix")))),
+        )
+        @Suppress("UNCHECKED_CAST")
+        val target = (plan["nodes"] as List<Map<String, Any?>>).single()["object"] as Map<String, Any?>
+        assertEquals("orders", target["name"])
+        assertEquals("orders_status_ix", target["index"])
+    }
 }

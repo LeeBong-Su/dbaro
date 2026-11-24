@@ -32,8 +32,21 @@ object Values {
     }
 
     private fun readValue(rs: ResultSet, i: Int, type: Int): Any? = when (type) {
-        Types.BIT, Types.BOOLEAN -> rs.getBoolean(i).takeUnless { rs.wasNull() }
-        Types.TINYINT, Types.SMALLINT, Types.INTEGER, Types.BIGINT -> rs.getLong(i).takeUnless { rs.wasNull() }
+        Types.BOOLEAN -> rs.getBoolean(i).takeUnless { rs.wasNull() }
+        // MySQL·MariaDB BIT(n>1)은 바이트로 온다 → 0과 1의 글 (BIT(1)과 PostgreSQL boolean은 불리언)
+        Types.BIT -> when (val value = rs.getObject(i)) {
+            null -> null
+            is Boolean -> value
+            is ByteArray -> value.joinToString("") { Integer.toBinaryString(it.toInt() and 0xFF).padStart(8, '0') }
+            else -> value.toString()
+        }
+        Types.TINYINT, Types.SMALLINT, Types.INTEGER -> rs.getLong(i).takeUnless { rs.wasNull() }
+        // MySQL·MariaDB BIGINT UNSIGNED는 Long을 넘을 수 있다 → 그때는 문자열
+        Types.BIGINT -> try {
+            rs.getLong(i).takeUnless { rs.wasNull() }
+        } catch (e: SQLException) {
+            rs.getString(i)
+        }
         Types.REAL, Types.FLOAT, Types.DOUBLE -> rs.getDouble(i).takeUnless { rs.wasNull() }
         Types.NUMERIC, Types.DECIMAL -> rs.getBigDecimal(i)?.toPlainString()
         Types.DATE -> rs.getDate(i)?.toLocalDate()?.toString()

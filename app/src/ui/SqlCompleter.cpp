@@ -540,6 +540,9 @@ void SqlCompleter::addObjects(QList<Item> &items, const QString &schemaName, int
         const QCborMap object = value.toMap();
         const QString name = object.value(QStringLiteral("name")).toString();
         const QString type = object.value(QStringLiteral("type")).toString().toUpper();
+        // PostgreSQL JDBC는 인덱스도 객체로 준다 (INDEX, PARTITIONED INDEX 등). 문장에 쓸 수 없으니 뺀다
+        if (type.contains(u"INDEX"))
+            continue;
         int kind = ObjectKind;
         if (type.contains(u"VIEW"))
             kind = ViewKind;

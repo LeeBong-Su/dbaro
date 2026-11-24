@@ -51,11 +51,11 @@ object ActualPlan {
             }
             "mysql" -> rolledBack(connection) {
                 val text = runner.query("EXPLAIN ANALYZE $sql").second.joinToString("\n") { it[0].orEmpty() }
-                mysqlPlan(text)
+                Explain.withTableNames(sql, mysqlPlan(text))
             }
             "mariadb" -> rolledBack(connection) {
                 val (columns, rows) = runner.query("ANALYZE $sql")
-                mariadbPlan(columns, rows)
+                Explain.withTableNames(sql, mariadbPlan(columns, rows))
             }
             else -> rolledBack(connection) {
                 val (columns, rows) = runner.query("EXPLAIN ANALYZE $sql")
@@ -246,10 +246,10 @@ object ActualPlan {
                     buffers?.toString().orEmpty(),
                     row.num("LAST_DISK_READS")?.toString().orEmpty(),
                     row.num("LAST_DISK_WRITES")?.toString().orEmpty(),
-                    // 작업 영역 크기는 KB, 임시 세그먼트는 바이트
-                    row.num("ESTIMATED_OPTIMAL_SIZE")?.let { size(it * 1024) }.orEmpty(),
-                    row.num("ESTIMATED_ONEPASS_SIZE")?.let { size(it * 1024) }.orEmpty(),
-                    row.num("LAST_MEMORY_USED")?.let { "${size(it * 1024)} (${passes(row.str("LAST_EXECUTION"))})" }.orEmpty(),
+                    // 모두 바이트 (Oracle Free 26ai에서 DISPLAY_CURSOR와 맞춰 봄). 쓴 메모리가 0이면 DISPLAY_CURSOR처럼 비운다
+                    row.num("ESTIMATED_OPTIMAL_SIZE")?.let { size(it) }.orEmpty(),
+                    row.num("ESTIMATED_ONEPASS_SIZE")?.let { size(it) }.orEmpty(),
+                    row.num("LAST_MEMORY_USED")?.takeIf { it > 0 }?.let { "${size(it)} (${passes(row.str("LAST_EXECUTION"))})" }.orEmpty(),
                     row.num("LAST_TEMPSEG_SIZE")?.let { size(it) }.orEmpty(),
                     row.num("COST")?.toString().orEmpty(),
                     row.str("PARTITION_START"),
@@ -265,9 +265,9 @@ object ActualPlan {
         return Explain.withoutEmptyColumns(columns, nodes, keep = 0) + mapOf("text" to text, "actualRowsColumn" to "A-Rows")
     }
 
-    /** DBMS_XPLAN처럼 바이트를 짧게: 1023, 2048K, 73M, 2G */
+    /** DBMS_XPLAN처럼 바이트를 짧게: 2048, 1161K, 73M, 20G */
     internal fun size(bytes: Long): String = when {
-        bytes < 1024 -> "$bytes"
+        bytes < 10L * 1024 -> "$bytes"
         bytes < 10L * 1024 * 1024 -> "${bytes / 1024}K"
         bytes < 10L * 1024 * 1024 * 1024 -> "${bytes / 1024 / 1024}M"
         else -> "${bytes / 1024 / 1024 / 1024}G"

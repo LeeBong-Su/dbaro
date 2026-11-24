@@ -30,6 +30,7 @@ Gradle 8.14는 JDK 24보다 새로운 JDK에서 실행되지 않는다. `JAVA_HO
 
 ```bash
 ./gradlew test          # 단위 테스트 (H2 내장 DB로 실행·페이지·취소·트랜잭션 확인)
+                        # dev/.env가 있고 dev/의 DB가 떠 있으면 실제 Oracle·PostgreSQL·MySQL·MariaDB로도 확인 (RealDbTest)
 ./gradlew installDist   # 앱이 쓰는 실행 파일: build/install/dbaro-engine/lib/*.jar
 ```
 

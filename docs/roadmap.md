@@ -50,12 +50,14 @@
 - [ ] AI 에이전트형 DB 도구 (AI 모델 연결)
 - [x] 실제 실행 계획 (실행해서 얻은 계획과 통계), 단축키 Alt+X: Oracle `V$SQL_PLAN_STATISTICS_ALL`·`DISPLAY_CURSOR ADVANCED ALLSTATS LAST`, PostgreSQL `EXPLAIN ANALYZE`, MySQL `EXPLAIN ANALYZE`, MariaDB `ANALYZE`. DML은 실행 후 되돌림, 예상과 크게 다른 행 수는 칠함, Oracle은 ADVANCED ALLSTATS LAST 글을 먼저 보임. Tibero는 아직
 
+- [x] 실제 DB(Oracle Free, PostgreSQL, MySQL, MariaDB 컨테이너)로 확인하는 환경
+  `dev/docker-compose.yml`을 띄우면 샘플 스키마(`dev/seed`: FK·두 컬럼 FK·자기 참조, 10만 행, 파티션, 여러 자료형, 뷰·루틴·트리거, 다른 스키마)가 들어가고, `dev/.env`가 있으면 엔진 테스트가 네 DB로도 돈다(`RealDbTest`). 확인하며 고친 것: Oracle 실제 계획 OMem·1Mem·Used-Mem이 1024배로 나오던 것(바이트였음), MySQL·MariaDB 계획의 테이블이 별칭으로 나와 객체 정보가 안 열리던 것, BIGINT UNSIGNED 최댓값·BIT(n)·YEAR 값, PostgreSQL 분할 테이블 DDL(PARTITION BY·파티션)과 프로시저 종류, Oracle DDL에 제약 인덱스가 따로 나와 다시 실행하면 오류 나던 것, PostgreSQL 자동완성에 인덱스가 테이블처럼 나오던 것. 앱 화면(자동완성 FK JOIN, 실행 중 표시·취소, Alt+X, 결과 편집)도 네 DB에서 확인했다.
+
 ## 그 밖의 후보
 
 - 세션·락 모니터, 세션 종료 (V$SESSION, pg_stat_activity, processlist)
 - 테이블스페이스·DB 크기 사용량
 - 스키마 비교 (개발 ↔ 운영 DDL 차이)
-- 실제 DB(Oracle Free, PostgreSQL, MariaDB 컨테이너)로 확인하는 환경
 - MSI 다시 빌드해서 설치 확인 (작업 표시줄 고정 아이콘·점프 목록)
 - 한국어 화면
 - macOS·Linux 빌드

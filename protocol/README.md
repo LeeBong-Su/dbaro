@@ -73,7 +73,7 @@ DDL (`ddl`): 객체 본문에 코멘트, 인덱스, 트리거, 그 객체를 가
 실행 계획 (`explain`):
 
 - `columns`: 표 머리글, `nodes: [{id, parent, cells, object}]`(`parent`가 -1이면 맨 위), `text`(DB 고유 형식의 계획 글, 없을 수 있음), `elapsedMs`
-- `object`: 그 단계가 읽는 객체 `{schema, name, type, index}` 또는 null. Oracle·Tibero는 `OBJECT_OWNER`·`OBJECT_NAME`·`OBJECT_TYPE`(TABLE, INDEX), PostgreSQL은 `Relation Name`(+`Index Name`) 또는 `Index Name`만(Bitmap Index Scan), MySQL은 `table`(별칭일 수 있음, `<derived2>` 같은 임시 결과는 제외)과 `key`
+- `object`: 그 단계가 읽는 객체 `{schema, name, type, index}` 또는 null. Oracle·Tibero는 `OBJECT_OWNER`·`OBJECT_NAME`·`OBJECT_TYPE`(TABLE, INDEX), PostgreSQL은 `Relation Name`(+`Index Name`) 또는 `Index Name`만(Bitmap Index Scan), MySQL·MariaDB는 `table`과 `key`(`table`은 문장에 쓴 별칭이라 문장의 FROM·JOIN에서 찾은 실제 테이블과 스키마로 바꾼다. `<derived2>` 같은 임시 결과는 제외)
 - Oracle·Tibero: `EXPLAIN PLAN SET STATEMENT_ID = ... FOR`로 PLAN_TABLE에 넣고 읽은 뒤 지운다. Oracle은 `DBMS_XPLAN.DISPLAY` 글도 함께
 - PostgreSQL: `EXPLAIN (FORMAT JSON)`을 트리로, 기본 `EXPLAIN` 글도 함께
 - MySQL·MariaDB와 그 밖: `EXPLAIN` 결과 표 그대로 (MySQL 8은 `EXPLAIN FORMAT=TREE` 글도 함께). 결과가 한 컬럼뿐이면 글로 준다
@@ -85,13 +85,13 @@ DDL (`ddl`): 객체 본문에 코멘트, 인덱스, 트리거, 그 객체를 가
 - 예상 계획의 모양에 더해 `actual: true`, `rolledBack`(DML이라 변경을 되돌렸음), `resultRows`(돌려준 행 수, Oracle은 바꾼 행 수도. 모르면 없음), `executionMs`(double), `planningMs`(PostgreSQL)
 - `actualRowsColumn`: 실제 행 수 컬럼 이름. 노드의 `rows: {estimated, actual}`(반복 전체 기준)로 앱이 예상과 크게 다른 단계를 칠한다
 - `textFirst`: 트리보다 글을 먼저 보인다 (Oracle 실제 계획. `DISPLAY_CURSOR`가 실패하면 그 이유를 글로 주고 false)
-- Oracle: 권한(`V$SESSION`, `V$SQL_PLAN_STATISTICS_ALL` 읽기)을 먼저 확인하고, `STATISTICS_LEVEL=ALL`로 실행해 결과 행을 모두 읽은 뒤 `V$SESSION.PREV_SQL_ID`로 커서를 찾는다. 트리는 `V$SQL_PLAN_STATISTICS_ALL`에서 `ALLSTATS LAST`와 같은 값(Starts, E-Rows, A-Rows, A-Time, Buffers, Reads, Writes, OMem, 1Mem, Used-Mem, Used-Tmp), 글은 `DBMS_XPLAN.DISPLAY_CURSOR(.., 'ADVANCED ALLSTATS LAST')`(Outline Data, Peeked Binds, Column Projection 등 포함. 앱은 글을 먼저 보인다). `STATISTICS_LEVEL`은 원래 값으로 돌린다
+- Oracle: 권한(`V$SESSION`, `V$SQL_PLAN_STATISTICS_ALL` 읽기)을 먼저 확인하고, `STATISTICS_LEVEL=ALL`로 실행해 결과 행을 모두 읽은 뒤 `V$SESSION.PREV_SQL_ID`로 커서를 찾는다. 트리는 `V$SQL_PLAN_STATISTICS_ALL`에서 `ALLSTATS LAST`와 같은 값(Starts, E-Rows, A-Rows, A-Time, Buffers, Reads, Writes, OMem, 1Mem, Used-Mem, Used-Tmp. 작업 영역 크기는 바이트라 `DISPLAY_CURSOR`처럼 K·M·G로 줄인다), 글은 `DBMS_XPLAN.DISPLAY_CURSOR(.., 'ADVANCED ALLSTATS LAST')`(Outline Data, Peeked Binds, Column Projection 등 포함. 앱은 글을 먼저 보인다). `STATISTICS_LEVEL`은 원래 값으로 돌린다
 - PostgreSQL: `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` (실제 행 수·시간은 반복 횟수를 곱한 전체, 버퍼, Rows Removed by Filter 등)
 - MySQL: `EXPLAIN ANALYZE`의 트리 글을 단계별로 나눈다 (예상 행 수, 실제 행 수, 반복, 시간, 비용). 글도 함께
 - MariaDB: `ANALYZE` 결과 표 (`r_rows`, `r_filtered`)
 - 그 밖(H2 등): `EXPLAIN ANALYZE` 글. Tibero는 아직 지원하지 않는다
 
-값: 정수 → 정수, 실수 → double, 불리언, NULL, NUMERIC/DECIMAL → 문자열(정밀도 유지), 날짜·시간 → `yyyy-MM-dd HH:mm:ss[.f]` 문자열, 바이너리 → 바이트열(최대 64KB), 긴 문자열·CLOB → 최대 64K 글자.
+값: 정수 → 정수(MySQL·MariaDB BIGINT UNSIGNED가 정수 범위를 넘으면 문자열), 실수 → double, 불리언(MySQL·MariaDB BIT(n>1)은 `10100101` 같은 0·1 문자열, YEAR는 정수), NULL, NUMERIC/DECIMAL → 문자열(정밀도 유지), 날짜·시간 → `yyyy-MM-dd HH:mm:ss[.f]` 문자열, 바이너리 → 바이트열(최대 64KB), 긴 문자열·CLOB → 최대 64K 글자.
 
 ## 동시성
 

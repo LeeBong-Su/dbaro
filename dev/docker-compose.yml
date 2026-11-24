@@ -1,5 +1,6 @@
 # DBaro 개발·테스트용 DB. 사용법은 dev/README.md 참고.
 # 비밀 값은 dev/.env 에서 읽는다 (.env.example 을 복사해서 만든다).
+# 처음 기동할 때 dev/seed 의 샘플 스키마가 들어간다. 다시 만들려면 down -v 후 up.
 services:
   oracle:
     image: gvenzl/oracle-free:23-slim
@@ -9,6 +10,10 @@ services:
       ORACLE_PASSWORD: ${ORACLE_PASSWORD}
       APP_USER: ${DB_USER}
       APP_USER_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      # 처음 기동할 때 샘플 스키마를 만든다 (dev/seed/oracle/init.sh)
+      - ./seed/oracle:/seed:ro
+      - ./seed/oracle/init.sh:/container-entrypoint-initdb.d/init.sh:ro
 
   mariadb:
     image: mariadb:11.4
@@ -19,6 +24,8 @@ services:
       MARIADB_DATABASE: dbaro
       MARIADB_USER: ${DB_USER}
       MARIADB_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - ./seed/mysql:/docker-entrypoint-initdb.d:ro
 
   mysql:
     image: mysql:8.4
@@ -29,6 +36,8 @@ services:
       MYSQL_DATABASE: dbaro
       MYSQL_USER: ${DB_USER}
       MYSQL_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - ./seed/mysql:/docker-entrypoint-initdb.d:ro
 
   postgres:
     image: postgres:17
@@ -38,3 +47,5 @@ services:
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: dbaro
+    volumes:
+      - ./seed/postgres:/docker-entrypoint-initdb.d:ro

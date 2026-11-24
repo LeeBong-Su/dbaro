@@ -137,7 +137,7 @@ object Ddl {
             if (relation)
                 builder.section("Comments", dependent("COMMENT", owner, name) ?: commentFallback(owner, name, qualified))
             if (type == "TABLE" || type == "MATERIALIZED VIEW")
-                builder.section("Indexes", dependent("INDEX", owner, name).orEmpty())
+                builder.section("Indexes", indexes(owner, name))
             if (type == "TABLE" || type == "VIEW")
                 builder.section("Triggers", dependent("TRIGGER", owner, name).orEmpty())
             if (type != "INDEX" && type != "TRIGGER" && type != "SYNONYM")
@@ -200,11 +200,37 @@ object Ddl {
             return parts.joinToString("\n\n").ifBlank { null }
         }
 
-        /** DBMS_METADATA 종속 객체 DDL. 해당 종속 객체가 없으면(ORA-31608) 빈 목록, 쓸 수 없으면 null. */
+        /**
+         * DBMS_METADATA 종속 객체 DDL. 해당 종속 객체가 없으면(ORA-31608) 빈 목록, 쓸 수 없으면 null.
+         * 여러 문장이 한 글로 오면서 두 번째 문장부터 앞에 공백이 붙는다 → 문장 첫 줄의 공백을 뗀다 (트리거 본문은 그대로).
+         */
         private fun dependent(kind: String, owner: String, name: String): List<String>? = try {
             listOfNotNull(c.string("SELECT DBMS_METADATA.GET_DEPENDENT_DDL(?, ?, ?) FROM DUAL", kind, name, owner))
+                .map { if (kind == "TRIGGER") it else it.replace(statementIndent, "\n") }
         } catch (e: SQLException) {
             if (e.errorCode == 31608) emptyList() else null
+        }
+
+        private val statementIndent = Regex("\n[ \t]+(?=(CREATE|COMMENT|ALTER|GRANT) )")
+
+        /**
+         * 테이블의 인덱스. 기본 키·고유 키 제약이 쓰는 인덱스는 테이블 DDL의 USING INDEX로 함께 만들어지므로 뺀다
+         * (GET_DEPENDENT_DDL('INDEX')는 모두 주어서 스크립트를 실행하면 ORA-00955가 난다).
+         */
+        private fun indexes(owner: String, name: String): List<String> {
+            val names = runCatching {
+                c.rows(
+                    "SELECT i.OWNER, i.INDEX_NAME FROM ALL_INDEXES i WHERE i.TABLE_OWNER = ? AND i.TABLE_NAME = ? AND i.INDEX_TYPE <> 'LOB' " +
+                        "AND NOT EXISTS (SELECT 1 FROM ALL_CONSTRAINTS k WHERE k.OWNER = i.TABLE_OWNER AND k.TABLE_NAME = i.TABLE_NAME " +
+                        "AND k.INDEX_OWNER = i.OWNER AND k.INDEX_NAME = i.INDEX_NAME) ORDER BY i.INDEX_NAME",
+                    owner, name,
+                )
+            }.getOrNull() ?: return dependent("INDEX", owner, name).orEmpty()
+            return names.map { row ->
+                runCatching { c.string("SELECT DBMS_METADATA.GET_DDL('INDEX', ?, ?) FROM DUAL", row[1], row[0]) }
+                    .getOrElse { return dependent("INDEX", owner, name).orEmpty() }
+                    .orEmpty()
+            }
         }
 
         private fun commentFallback(owner: String, name: String, qualified: String): List<String> = runCatching {
@@ -365,7 +391,7 @@ object Ddl {
             }
             val builder = Builder("$schema.$name ($type)")
             when (kind) {
-                "r", "p", "f" -> builder.main(tableDdl(oid, qualified))
+                "r", "p", "f" -> builder.main(tableDdl(oid, qualified, kind == "p"))
                 "v" -> builder.main("CREATE OR REPLACE VIEW $qualified AS\n" + c.string("SELECT pg_get_viewdef(?::oid, true)", oid).orEmpty().trim())
                 "m" -> builder.main("CREATE MATERIALIZED VIEW $qualified AS\n" + c.string("SELECT pg_get_viewdef(?::oid, true)", oid).orEmpty().trim().removeSuffix(";") + "\nWITH DATA;")
                 "S" -> builder.main(sequenceDdl(schema, name, qualified))
@@ -377,12 +403,22 @@ object Ddl {
                 builder.section("Owner", listOf("ALTER $keyword $qualified OWNER TO ${c.string("SELECT quote_ident(?)", owner)};"))
             if (kind in listOf("r", "p", "f", "v", "m"))
                 builder.section("Comments", comments(oid, qualified, keyword))
+            if (kind == "p")
+                builder.section("Partitions", c.strings(
+                    "SELECT 'CREATE TABLE ' || quote_ident(n.nspname) || '.' || quote_ident(c.relname) || ' PARTITION OF ' || ? || ' ' || " +
+                        "pg_get_expr(c.relpartbound, c.oid) || ';' FROM pg_inherits h JOIN pg_class c ON c.oid = h.inhrelid " +
+                        "JOIN pg_namespace n ON n.oid = c.relnamespace WHERE h.inhparent = ?::oid ORDER BY c.relname",
+                    qualified, oid,
+                ).filterNotNull())
             if (kind == "r" || kind == "p" || kind == "m")
                 builder.section("Indexes", c.strings(
                     "SELECT pg_get_indexdef(i.indexrelid) FROM pg_index i WHERE i.indrelid = ?::oid " +
-                        "AND NOT EXISTS (SELECT 1 FROM pg_constraint k WHERE k.conindid = i.indexrelid) ORDER BY 1",
+                        "AND NOT EXISTS (SELECT 1 FROM pg_constraint k WHERE k.conindid = i.indexrelid) " +
+                        // 파티션이 부모 인덱스에서 물려받은 인덱스는 부모 인덱스가 만든다
+                        "AND NOT EXISTS (SELECT 1 FROM pg_inherits ih WHERE ih.inhrelid = i.indexrelid) ORDER BY 1",
                     oid,
-                ).filterNotNull().map { "$it;" })
+                    // 분할 테이블의 인덱스는 ON ONLY(부모에만)로 나온다 → 다시 만들 때 파티션에도 만들어지게 뺀다
+                ).filterNotNull().map { it.replace(" ON ONLY ", " ON ") + ";" })
             if (kind == "r" || kind == "p" || kind == "v")
                 builder.section("Triggers", c.strings(
                     "SELECT pg_get_triggerdef(oid, true) FROM pg_trigger WHERE tgrelid = ?::oid AND NOT tgisinternal ORDER BY tgname",
@@ -393,7 +429,22 @@ object Ddl {
             return Result(schema, name, type, builder.toString())
         }
 
-        private fun tableDdl(oid: Long, qualified: String): String {
+        private fun tableDdl(oid: Long, qualified: String, partitioned: Boolean): String {
+            // 파티션: 컬럼은 부모에서 오므로 PARTITION OF 로 (부모에서 물려받은 제약은 뺀다)
+            c.rows(
+                "SELECT quote_ident(pn.nspname) || '.' || quote_ident(p.relname), pg_get_expr(c.relpartbound, c.oid) " +
+                    "FROM pg_class c JOIN pg_inherits h ON h.inhrelid = c.oid JOIN pg_class p ON p.oid = h.inhparent " +
+                    "JOIN pg_namespace pn ON pn.oid = p.relnamespace WHERE c.oid = ?::oid AND c.relispartition",
+                oid,
+            ).firstOrNull()?.let { parent ->
+                val own = c.rows(
+                    "SELECT quote_ident(conname), pg_get_constraintdef(oid, true) FROM pg_constraint " +
+                        "WHERE conrelid = ?::oid AND conparentid = 0 AND coninhcount = 0 ORDER BY conname",
+                    oid,
+                ).map { "    CONSTRAINT ${it[0]} ${it[1]}" }
+                return "CREATE TABLE $qualified PARTITION OF ${parent[0]}" +
+                    (if (own.isEmpty()) "" else " (\n" + own.joinToString(",\n") + "\n)") + "\n${parent[1]};"
+            }
             val lines = ArrayList<String>()
             for (row in c.rows(
                 "SELECT quote_ident(a.attname), format_type(a.atttypid, a.atttypmod), pg_get_expr(d.adbin, d.adrelid), " +
@@ -418,7 +469,8 @@ object Ddl {
             )) {
                 lines.add("    CONSTRAINT ${row[0]} ${row[1]}")
             }
-            return "CREATE TABLE $qualified (\n" + lines.joinToString(",\n") + "\n);"
+            val partitionKey = if (partitioned) c.string("SELECT pg_get_partkeydef(?::oid)", oid)?.let { "\nPARTITION BY $it" }.orEmpty() else ""
+            return "CREATE TABLE $qualified (\n" + lines.joinToString(",\n") + "\n)$partitionKey;"
         }
 
         private fun sequenceDdl(schema: String, name: String, qualified: String): String {
@@ -469,15 +521,17 @@ object Ddl {
         }.getOrDefault(emptyList())
 
         private fun function(schema: String, name: String): Result {
-            val bodies = c.strings(
-                "SELECT pg_get_functiondef(p.oid) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace " +
-                    "WHERE n.nspname = ? AND p.proname = ? ORDER BY p.oid",
+            // pg_get_functiondef는 집계 함수(prokind 'a')를 다루지 못한다
+            val routines = c.rows(
+                "SELECT pg_get_functiondef(p.oid), p.prokind FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace " +
+                    "WHERE n.nspname = ? AND p.proname = ? AND p.prokind <> 'a' ORDER BY p.oid",
                 schema, name,
-            ).filterNotNull()
-            if (bodies.isEmpty()) notFound(schema, name)
-            val builder = Builder("$schema.$name (FUNCTION)")
-            bodies.forEach { builder.main(it.trim().let { body -> if (body.endsWith(";")) body else "$body;" }) }
-            return Result(schema, name, "FUNCTION", builder.toString())
+            ).filter { it[0] != null }
+            if (routines.isEmpty()) notFound(schema, name)
+            val type = if (routines.all { it[1]?.toString() == "p" }) "PROCEDURE" else "FUNCTION"
+            val builder = Builder("$schema.$name ($type)")
+            routines.forEach { builder.main(it[0].toString().trim().let { body -> if (body.endsWith(";")) body else "$body;" }) }
+            return Result(schema, name, type, builder.toString())
         }
     }
 

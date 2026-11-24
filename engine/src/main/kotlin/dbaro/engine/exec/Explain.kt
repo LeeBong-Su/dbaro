@@ -19,7 +19,8 @@ object Explain {
     fun explain(type: String, connection: Connection, sql: String): Map<String, Any?> = when (type) {
         "oracle", "tibero" -> oracle(connection, sql, withXplan = type == "oracle")
         "postgres" -> postgres(connection, sql)
-        else -> tabular(connection, sql, if (type == "mysql") "EXPLAIN FORMAT=TREE $sql" else null)
+        "mysql", "mariadb" -> withTableNames(sql, tabular(connection, sql, if (type == "mysql") "EXPLAIN FORMAT=TREE $sql" else null))
+        else -> tabular(connection, sql, null)
     }
 
     // ---------------------------------------------------------------------
@@ -299,6 +300,115 @@ object Explain {
             mapOf("id" to index.toLong(), "parent" to -1L, "object" to planObject, "cells" to cells.map { it.orEmpty() })
         }
         return mapOf("columns" to columns, "nodes" to nodes, "text" to text)
+    }
+
+    // ---------------------------------------------------------------------
+    // MySQL·MariaDB 계획의 테이블 이름은 문장에 쓴 별칭이다 (FROM orders o → o).
+    // 객체 정보 창이 테이블을 찾을 수 있게 문장의 FROM·JOIN에서 별칭이 가리키는 테이블(과 스키마)로 바꾼다.
+
+    @Suppress("UNCHECKED_CAST")
+    internal fun withTableNames(sql: String, plan: Map<String, Any?>): Map<String, Any?> {
+        val nodes = plan["nodes"] as? List<Map<String, Any?>> ?: return plan
+        val tables = tableAliases(sql)
+        if (tables.isEmpty()) return plan
+        val resolved = nodes.map { node ->
+            val target = node["object"] as? Map<String, Any?> ?: return@map node
+            val (schema, table) = tables[(target["name"] as? String)?.lowercase()] ?: return@map node
+            node + ("object" to target + mapOf("schema" to (schema ?: target["schema"]), "name" to table))
+        }
+        return plan + ("nodes" to resolved)
+    }
+
+    private val notAliases = setOf(
+        "WHERE", "ON", "USING", "JOIN", "INNER", "LEFT", "RIGHT", "FULL", "OUTER", "CROSS", "NATURAL", "STRAIGHT_JOIN",
+        "GROUP", "ORDER", "HAVING", "LIMIT", "OFFSET", "FETCH", "UNION", "EXCEPT", "INTERSECT", "WINDOW", "FOR", "LOCK",
+        "SET", "VALUES", "VALUE", "SELECT", "FORCE", "USE", "IGNORE", "PARTITION", "LATERAL", "AS", "WITH", "RETURNING",
+    )
+    private val fromEnds = setOf("WHERE", "GROUP", "ORDER", "HAVING", "LIMIT", "UNION", "EXCEPT", "INTERSECT", "WINDOW", "SET")
+
+    /** 문장의 테이블 참조: 별칭(과 스키마를 붙여 쓴 테이블 이름) 소문자 → (스키마, 테이블) */
+    internal fun tableAliases(sql: String): Map<String, Pair<String?, String>> {
+        val tokens = identifierTokens(sql)
+        val result = HashMap<String, Pair<String?, String>>()
+        val inFrom = ArrayList<Boolean>().apply { add(false) } // 괄호 깊이마다 FROM 목록 안인지
+        fun word(i: Int) = tokens.getOrNull(i)?.takeIf { !it.quoted }?.text?.uppercase()
+        fun name(i: Int) = tokens.getOrNull(i)?.takeIf { it.quoted || (it.text.first().let { c -> c.isLetter() || c == '_' } && it.text.uppercase() !in notAliases) }
+
+        var i = 0
+        while (i < tokens.size) {
+            val token = tokens[i]
+            val upper = word(i)
+            when {
+                token.text == "(" && !token.quoted -> inFrom.add(false)
+                token.text == ")" && !token.quoted -> if (inFrom.size > 1) inFrom.removeAt(inFrom.size - 1)
+                upper == "FROM" || upper == "JOIN" -> inFrom[inFrom.size - 1] = true
+                upper in fromEnds -> inFrom[inFrom.size - 1] = false
+            }
+            val startsReference = upper == "FROM" || upper == "JOIN" || upper == "UPDATE" || upper == "INTO" ||
+                (token.text == "," && !token.quoted && inFrom.last())
+            if (startsReference) {
+                val first = name(i + 1)
+                if (first != null) {
+                    var j = i + 2
+                    var schema: String? = null
+                    var table = first.text
+                    if (tokens.getOrNull(j)?.text == "." && name(j + 1) != null) {
+                        schema = first.text
+                        table = tokens[j + 1].text
+                        j += 2
+                        result[table.lowercase()] = schema to table
+                    }
+                    if (word(j) == "AS") j++
+                    name(j)?.let { alias -> result[alias.text.lowercase()] = schema to table }
+                }
+            }
+            i++
+        }
+        return result
+    }
+
+    private class Token(val text: String, val quoted: Boolean)
+
+    /** 이름·낱말과 괄호·쉼표·점만 남긴다 (문자열과 주석은 건너뛴다). `이름`·"이름"은 따옴표를 벗긴다 */
+    private fun identifierTokens(sql: String): List<Token> {
+        val tokens = ArrayList<Token>()
+        var i = 0
+        while (i < sql.length) {
+            val c = sql[i]
+            when {
+                c.isWhitespace() -> i++
+                sql.startsWith("--", i) || c == '#' -> i = sql.indexOf('\n', i).let { if (it < 0) sql.length else it + 1 }
+                sql.startsWith("/*", i) -> i = sql.indexOf("*/", i + 2).let { if (it < 0) sql.length else it + 2 }
+                c == '\'' -> {
+                    i++
+                    while (i < sql.length && sql[i] != '\'') i += if (sql[i] == '\\') 2 else 1
+                    i++
+                }
+                c == '`' || c == '"' -> {
+                    val text = StringBuilder()
+                    i++
+                    while (i < sql.length) {
+                        if (sql[i] == c) {
+                            if (sql.getOrNull(i + 1) == c) { text.append(c); i += 2; continue }
+                            break
+                        }
+                        text.append(sql[i++])
+                    }
+                    i++
+                    tokens.add(Token(text.toString(), quoted = true))
+                }
+                c.isLetterOrDigit() || c == '_' || c == '$' -> {
+                    val start = i
+                    while (i < sql.length && (sql[i].isLetterOrDigit() || sql[i] == '_' || sql[i] == '$')) i++
+                    tokens.add(Token(sql.substring(start, i), quoted = false))
+                }
+                else -> {
+                    tokens.add(Token(c.toString(), quoted = false))
+                    i++
+                }
+            }
+        }
+        return tokens
     }
 
     // ---------------------------------------------------------------------
