@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- DBaro 설치 프로그램 화면 글 (한국어). 나머지 표준 화면 글은 WixToolset.UI.wixext의 ko-KR을 쓴다. -->
+<WixLocalization Culture="ko-KR" Codepage="949" xmlns="http://wixtoolset.org/schemas/v4/wxl">
+  <String Id="PackageLanguage" Value="1042" />
+  <String Id="DowngradeError" Value="더 새로운 버전의 DBaro가 이미 설치되어 있습니다." />
+  <String Id="LaunchCheckBox" Value="DBaro 실행" />
+  <String Id="ExitTextWithDesktop" Value="DBaro [ProductVersion] 설치를 마쳤습니다.&#xA;&#xA;설치 위치: [INSTALLFOLDER]&#xA;바로 가기: 바탕 화면, 시작 메뉴" />
+  <String Id="ExitTextNoDesktop" Value="DBaro [ProductVersion] 설치를 마쳤습니다.&#xA;&#xA;설치 위치: [INSTALLFOLDER]&#xA;바로 가기: 시작 메뉴" />
+</WixLocalization>

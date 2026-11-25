@@ -2,6 +2,9 @@ DBaro (디비바로) - 크로스플랫폼 DB 접속 툴
 
 실행
   dbaro.exe 를 실행한다. Java나 Qt를 따로 설치할 필요가 없다 (runtime\ 폴더에 Java 런타임이 들어 있다).
+  MSI로 설치했다면 바탕 화면이나 시작 메뉴의 DBaro 바로 가기로 실행한다.
+  서명되지 않은 배포본은 Windows 11 스마트 앱 제어가 켜져 있으면 실행이 막힌다
+  (Windows 보안 > 앱 및 브라우저 컨트롤 > 스마트 앱 제어 설정).
 
 명령줄
   dbaro-cli.exe 는 DBaro에 저장한 연결로 SQL을 실행한다 (dbaro-cli --help).

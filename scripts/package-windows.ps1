@@ -11,6 +11,9 @@
     6. 배포본의 Java로 엔진을 띄워 hello 요청에 응답하는지 확인
     7. ZIP 생성
 
+    DBARO_SIGN_ARGS 환경 변수가 있으면 dbaro.exe, dbaro-cli.exe에 서명하고 모든 exe·dll의 서명을 확인한다
+    (scripts\sign-windows.ps1). 없으면 서명 없이 만들고 경고한다.
+
     결과: dist\DBaro-<버전>-windows-x64\ 폴더와 같은 이름의 .zip
 
 .PARAMETER QtDir
@@ -202,6 +205,10 @@ Invoke-Native (Join-Path $QtDir 'bin\windeployqt.exe') @('--release', '--no-tran
 # MSVC 런타임은 설치 프로그램 없이 앱 옆에 둔다 (앱 로컬 배포).
 Copy-Item (Join-Path $crtDir.FullName '*.dll') $stage
 
+# 서명 (DBARO_SIGN_ARGS가 있을 때만. scripts\sign-windows.ps1 참고)
+Write-Step 'Signing dbaro.exe and dbaro-cli.exe'
+& (Join-Path $PSScriptRoot 'sign-windows.ps1') -Files (Join-Path $stage 'dbaro.exe'), (Join-Path $stage 'dbaro-cli.exe')
+
 $engineLib = Join-Path $stage 'engine\lib'
 New-Item -ItemType Directory -Path $engineLib -Force | Out-Null
 Copy-Item (Join-Path $repo 'engine\build\install\dbaro-engine\lib\*.jar') $engineLib
@@ -229,6 +236,9 @@ Set-Content -Path (Join-Path $stage 'BUILD-INFO.txt') -Value $buildInfo -Encodin
 Write-Step 'Checking the packaged engine'
 Test-Engine $stage $version
 Write-Host 'The engine started with the bundled Java runtime and answered.'
+
+Write-Step 'Checking signatures'
+& (Join-Path $PSScriptRoot 'sign-windows.ps1') -AuditFolder $stage
 
 if (-not $NoZip) {
     Write-Step 'Creating the ZIP'

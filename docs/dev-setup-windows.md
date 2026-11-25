@@ -58,11 +58,22 @@ cd engine
 ```powershell
 winget install -e --id Microsoft.DotNet.SDK.8
 dotnet tool install --global wix --version 5.0.2
+wix extension add -g WixToolset.UI.wixext/5.0.2   # 설치 화면. 없으면 build-msi-windows.ps1이 받는다
 ```
 
 WiX는 v5를 쓴다. v6부터는 연 매출 1만 달러를 넘는 조직이 쓰면 유지보수 비용(GitHub 후원)을 내야 하고, v7부터는 EULA 동의가 강제된다
 ([WiX 문서](https://docs.firegiant.com/wix/osmf/)).
 
-## 5. 테스트용 DB
+## 5. 스마트 앱 제어
+
+Windows 11의 스마트 앱 제어가 켜져 있으면(Windows 보안 > 앱 및 브라우저 컨트롤 > 스마트 앱 제어 설정)
+직접 빌드한 `dbaro.exe`처럼 신뢰할 수 있는 인증서로 서명하지 않은 exe는 실행되지 않는다.
+처음에는 "평가" 상태였다가 Windows가 스스로 "켜기"로 바꿀 수 있다.
+막혔는지는 이벤트 뷰어의 `Microsoft-Windows-CodeIntegrity/Operational` 로그(이벤트 3077)에서 확인한다.
+
+개발 PC에서는 스마트 앱 제어를 끄거나, 평가 상태로 둔 가상 머신에서 개발한다 ([Microsoft 안내](https://learn.microsoft.com/windows/apps/develop/smart-app-control/test-your-app-with-smart-app-control)).
+배포본은 코드 서명으로 해결한다 (README의 "코드 서명").
+
+## 6. 테스트용 DB
 
 Docker 호환 도구는 아직 설치하지 않았다. Docker Desktop은 직원 250명 이상 또는 매출 1천만 달러 이상인 회사에서 업무용으로 쓰면 유료 구독이 필요하다. 무료 대안은 Rancher Desktop이다.
