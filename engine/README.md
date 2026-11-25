@@ -21,6 +21,8 @@
 | tibero | `com.tmax.tibero.jdbc.TbDriver` | 연결 설정에서 jar 지정 (벤더 독점) |
 
 내려받은 jar는 앱이 넘겨 준 폴더(`--driver-dir`, 기본 `%APPDATA%\DBaro\DBaro\drivers`)에 저장한다.
+그 폴더에 `이름-버전.jar`가 이미 있으면 내려받지 않는다. 폐쇄망에서는 이 파일들을 미리 복사해 둔다.
+버전을 바꾸면 `packaging/windows/README.txt`의 폐쇄망 목록도 함께 고친다.
 Windows에서는 OS 인증서 저장소로 HTTPS를 검증해서 회사 HTTPS 검사 프록시 환경에서도 받아진다.
 
 ## 빌드와 실행
