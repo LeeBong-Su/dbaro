@@ -95,6 +95,7 @@ QueryTab::QueryTab(EngineClient *engine, QWidget *parent)
     connect(m_session, &QuerySession::statementSucceeded, this, &QueryTab::onStatementSucceeded);
     connect(m_session, &QuerySession::schemaChanged, this, &QueryTab::onSchemaChanged);
     connect(m_connectionBar, &ConnectionBar::schemaChosen, this, &QueryTab::schemaSwitchRequested);
+    connect(m_connectionBar, &ConnectionBar::databaseChosen, this, &QueryTab::databaseSwitchRequested);
 }
 
 int QueryTab::beginActivity(const QString &text)
@@ -125,7 +126,22 @@ QString QueryTab::useTarget(const QString &sql)
 void QueryTab::setConnectionId(const QString &id)
 {
     m_connectionId = id;
-    m_editor->completer()->setConnection(m_metadata, id);
+    m_editor->completer()->setConnection(m_metadata, metadataId());
+}
+
+void QueryTab::setDatabase(const QString &database)
+{
+    if (m_database == database)
+        return;
+    m_database = database;
+    m_editor->completer()->setConnection(m_metadata, metadataId());
+    m_connectionBar->setDatabase(database);
+    m_connectionBar->setSchemas({}); // 다른 DB의 스키마 목록은 다시 접속한 뒤에 받는다
+}
+
+QString QueryTab::metadataId() const
+{
+    return m_connectionId.isEmpty() ? QString() : Db::metadataId(m_connectionId, m_database);
 }
 
 void QueryTab::setFile(const QString &path, const TextFileFormat &format)
@@ -142,7 +158,7 @@ bool QueryTab::hasUnsavedFile() const
 void QueryTab::setMetadataService(MetadataService *metadata)
 {
     m_metadata = metadata;
-    m_editor->completer()->setConnection(metadata, m_connectionId);
+    m_editor->completer()->setConnection(metadata, metadataId());
 }
 
 void QueryTab::onStatementSucceeded(const SqlStatement &statement)
@@ -150,8 +166,10 @@ void QueryTab::onStatementSucceeded(const SqlStatement &statement)
     // 객체를 만들거나 바꾸면 자동완성용 메타데이터를 다시 읽게 한다.
     static const QRegularExpression ddl(QStringLiteral("^\\s*(CREATE|ALTER|DROP|RENAME|TRUNCATE|COMMENT)\\b"),
                                         QRegularExpression::CaseInsensitiveOption);
-    if (m_metadata && !m_connectionId.isEmpty() && ddl.match(statement.text).hasMatch())
-        m_metadata->invalidate(m_connectionId);
+    if (m_metadata && !m_connectionId.isEmpty() && ddl.match(statement.text).hasMatch()) {
+        m_metadata->invalidate(metadataId());
+        loadDatabaseList(); // CREATE·DROP DATABASE면 고를 수 있는 DB가 바뀐다
+    }
 
     // 스키마를 바꾸는 문장을 직접 실행했으면 서버에 지금 스키마를 물어 막대·자동완성에 반영하고,
     // 다시 접속할 때도 그 스키마로 바꾸도록 기억한다.
@@ -181,7 +199,7 @@ void QueryTab::loadSchemaList()
     // 탐색기·자동완성과 같은 메타데이터 캐시를 쓴다 (탭 세션은 쿼리용으로 비워 둔다).
     QPointer<QueryTab> self(this);
     m_metadata->request(
-        m_connectionId, QStringLiteral("metaSchemas"), {},
+        metadataId(), QStringLiteral("metaSchemas"), {},
         [self](const QCborMap &result, const QString &error) {
             if (!self || !error.isEmpty() || !self->m_session->isConnected())
                 return;
@@ -189,6 +207,25 @@ void QueryTab::loadSchemaList()
             for (const QCborValue &value : result.value(QStringLiteral("names")).toArray())
                 names << value.toString();
             self->m_connectionBar->setSchemas(names);
+        },
+        false);
+}
+
+void QueryTab::loadDatabaseList()
+{
+    if (!m_metadata || m_connectionId.isEmpty() || !m_canSwitchDatabase)
+        return;
+    // PostgreSQL: 같은 서버의 데이터베이스 (고르면 그 DB로 다시 접속한다)
+    QPointer<QueryTab> self(this);
+    m_metadata->request(
+        metadataId(), QStringLiteral("metaDatabases"), {},
+        [self](const QCborMap &result, const QString &error) {
+            if (!self || !error.isEmpty() || !self->m_session->isConnected())
+                return;
+            QStringList names;
+            for (const QCborValue &value : result.value(QStringLiteral("names")).toArray())
+                names << value.toString();
+            self->m_connectionBar->setDatabases(names);
         },
         false);
 }
@@ -202,6 +239,7 @@ void QueryTab::setDialect(SqlDialect dialect)
 
 void QueryTab::setConnectionProfile(const ConnectionProfile *profile)
 {
+    m_canSwitchDatabase = profile && Db::canSwitchDatabase(profile->type);
     m_connectionBar->setProfile(profile);
     updateConnectionBar();
 }
@@ -226,8 +264,10 @@ void QueryTab::updateConnectionBar()
             && current.compare(m_preferredSchema, Qt::CaseInsensitive) != 0)
             m_preferredSchema.clear();
         loadSchemaList();
+        loadDatabaseList();
     } else if (!connected && m_wasConnected) {
         m_connectionBar->setSchemas({});
+        m_connectionBar->setDatabases({});
     }
     m_wasConnected = connected;
     if (connected)
@@ -291,7 +331,7 @@ void QueryTab::prepareEditing()
     params.insert(QStringLiteral("nameQuoted"), target->nameQuoted);
     QPointer<QueryTab> self(this);
     m_metadata->request(
-        m_connectionId, QStringLiteral("tableInfo"), params,
+        metadataId(), QStringLiteral("tableInfo"), params,
         [self](const QCborMap &table, const QString &error) {
             if (!self)
                 return;

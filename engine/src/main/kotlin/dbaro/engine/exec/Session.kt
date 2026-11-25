@@ -359,6 +359,21 @@ class Session(val id: String, private val type: String, private val connection: 
         return mapOf("names" to names.sorted(), "current" to current)
     }
 
+    /**
+     * 같은 서버의 데이터베이스 목록 (PostgreSQL). 접속할 수 있는 것만, 템플릿은 뺀다.
+     * PostgreSQL은 세션 안에서 데이터베이스를 바꿀 수 없어서 앱이 고른 데이터베이스로 다시 접속한다.
+     * 다른 DB는 빈 목록 (MySQL·MariaDB의 데이터베이스는 스키마 목록에 나온다).
+     */
+    fun databases(): Map<String, Any?> {
+        if (type != "postgres") return mapOf("names" to emptyList<String>(), "current" to null)
+        val names = ArrayList<String>()
+        connection.createStatement().use { st ->
+            st.executeQuery("SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate ORDER BY datname")
+                .use { rs -> while (rs.next()) rs.getString(1)?.let { names.add(it) } }
+        }
+        return mapOf("names" to names, "current" to queryString("SELECT current_database()"))
+    }
+
     fun objects(schema: String): Map<String, Any?> {
         val meta = connection.metaData
         val catalog = if (usesCatalogs) schema else null

@@ -47,6 +47,14 @@ bool databaseRequired(DbType type);
 bool requiresDriverPath(DbType type);
 QString initSqlHint(DbType type);
 QString jdbcUrl(const ConnectionProfile &profile);
+
+// 쿼리 탭에서 데이터베이스를 골라 바꿀 수 있는 DB (PostgreSQL). 세션 안에서는 못 바꿔서 그 DB로 다시 접속한다.
+bool canSwitchDatabase(DbType type);
+// 같은 연결의 다른 데이터베이스를 가리키는 메타데이터 id (탐색기·자동완성 캐시를 DB마다 따로 둔다).
+// database가 비면 profileId 그대로다 (접속 설정의 기본 DB).
+QString metadataId(const QString &profileId, const QString &database);
+QString baseProfileId(const QString &metadataId); // metadataId의 연결 id
+QString databaseOf(const QString &metadataId);    // metadataId가 가리키는 DB. 기본 DB면 빈 값
 } // namespace Db
 
 namespace Env {

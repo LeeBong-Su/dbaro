@@ -53,6 +53,19 @@ ConnectionBar::ConnectionBar(QWidget *parent)
     nameFont.setBold(true);
     m_name->setFont(nameFont);
 
+    m_databaseCaption = new QLabel(tr("Database"), this);
+    m_databaseCaption->setObjectName(QStringLiteral("connectionDatabaseCaption"));
+    m_databaseCombo = new QComboBox(this);
+    m_databaseCombo->setObjectName(QStringLiteral("databaseSwitcher"));
+    m_databaseCombo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+    m_databaseCombo->setMaxVisibleItems(25);
+    m_databaseCombo->setFocusPolicy(Qt::ClickFocus);
+    connect(m_databaseCombo, &QComboBox::activated, this, [this](int index) {
+        const QString chosen = m_databaseCombo->itemText(index);
+        if (!chosen.isEmpty() && chosen != shownDatabase())
+            emit databaseChosen(chosen);
+    });
+
     m_schemaCaption = new QLabel(this);
     m_schemaCaption->setObjectName(QStringLiteral("connectionSchemaCaption"));
     m_schemaCombo = new QComboBox(this);
@@ -80,6 +93,8 @@ ConnectionBar::ConnectionBar(QWidget *parent)
     layout->setSpacing(10);
     layout->addWidget(m_dot);
     layout->addWidget(m_name);
+    layout->addWidget(m_databaseCaption);
+    layout->addWidget(m_databaseCombo);
     layout->addWidget(m_schemaCaption);
     layout->addWidget(m_schemaCombo);
     layout->addWidget(m_details, 1);
@@ -97,6 +112,7 @@ void ConnectionBar::setProfile(const ConnectionProfile *profile)
         m_profile = *profile;
     else
         m_profile.reset();
+    refreshDatabaseItems(); // 고른 DB가 없으면 접속 설정의 DB를 보인다
     refresh();
 }
 
@@ -133,6 +149,44 @@ void ConnectionBar::refreshSchemaItems()
     m_schemaCombo->setCurrentIndex(int(items.indexOf(m_schema)));
 }
 
+void ConnectionBar::setDatabase(const QString &database)
+{
+    m_database = database;
+    refreshDatabaseItems();
+    refresh();
+}
+
+void ConnectionBar::setDatabases(const QStringList &databases)
+{
+    m_databases = databases;
+    refreshDatabaseItems();
+    refresh();
+}
+
+QString ConnectionBar::shownDatabase() const
+{
+    if (!m_database.isEmpty())
+        return m_database;
+    return m_profile ? m_profile->database : QString();
+}
+
+void ConnectionBar::refreshDatabaseItems()
+{
+    const QSignalBlocker blocker(m_databaseCombo);
+    const QString current = shownDatabase();
+    QStringList items = m_databases;
+    if (!current.isEmpty() && !items.contains(current))
+        items.prepend(current);
+    m_databaseCombo->clear();
+    m_databaseCombo->addItems(items);
+    m_databaseCombo->setCurrentIndex(int(items.indexOf(current)));
+}
+
+QString ConnectionBar::databaseText() const
+{
+    return m_databaseCombo->isVisibleTo(this) ? shownDatabase() : QString();
+}
+
 QString ConnectionBar::schemaText() const
 {
     return m_schemaCombo->isVisibleTo(this) ? m_schema : QString();
@@ -148,12 +202,13 @@ QString ConnectionBar::stateText() const
     return m_stateLabel->text();
 }
 
-QString ConnectionBar::target(const ConnectionProfile &profile)
+QString ConnectionBar::target(const ConnectionProfile &profile) const
 {
     QString where = QStringLiteral("%1:%2").arg(profile.host).arg(profile.port);
-    if (!profile.database.isEmpty())
+    const QString database = shownDatabase();
+    if (!database.isEmpty())
         where += (profile.type == DbType::Oracle && profile.oracleUseSid ? QStringLiteral(":") : QStringLiteral("/"))
-                 + profile.database;
+                 + database;
     QString text = QStringLiteral("%1  ·  %2").arg(Db::typeName(profile.type), where);
     if (!profile.user.isEmpty())
         text += QStringLiteral("  ·  %1").arg(profile.user);
@@ -172,9 +227,10 @@ void ConnectionBar::refresh()
         m_name->setStyleSheet(QStringLiteral("color: %1;").arg(dim.name()));
         m_details->setText(tr("Choose a connection in the toolbar or double-click one in Database Explorer."));
         m_details->setStyleSheet(QStringLiteral("color: %1;").arg(dim.name()));
-        for (QLabel *label : {m_schemaCaption, m_environment, m_readOnly, m_pendingBadge, m_stateLabel})
+        for (QLabel *label : {m_databaseCaption, m_schemaCaption, m_environment, m_readOnly, m_pendingBadge, m_stateLabel})
             label->hide();
         m_schemaCombo->hide();
+        m_databaseCombo->hide();
         update();
         return;
     }
@@ -189,6 +245,20 @@ void ConnectionBar::refresh()
 
     // 이 탭의 지금 스키마: 접속해 있으면 이름 옆에 목록으로 (고르면 바로 바꾼다)
     const bool online = m_state == State::Connected || m_state == State::Running;
+
+    // PostgreSQL: 그 앞에 데이터베이스 목록 (고르면 그 DB로 다시 접속한다)
+    const bool showDatabase = online && Db::canSwitchDatabase(profile.type) && !m_databases.isEmpty();
+    m_databaseCaption->setVisible(showDatabase);
+    m_databaseCombo->setVisible(showDatabase);
+    m_databaseCombo->setEnabled(m_state == State::Connected);
+    if (showDatabase) {
+        m_databaseCaption->setStyleSheet(QStringLiteral("color: %1;").arg(dim.name()));
+        const QString tip = tr("Database of this tab. PostgreSQL cannot switch databases within a session,\n"
+                               "so choosing another one reconnects this tab to it.");
+        m_databaseCombo->setToolTip(tip);
+        m_databaseCaption->setToolTip(tip);
+    }
+
     const bool showSchema = online && (!m_schema.isEmpty() || !m_schemas.isEmpty());
     m_schemaCaption->setVisible(showSchema);
     m_schemaCombo->setVisible(showSchema);

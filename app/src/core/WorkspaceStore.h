@@ -18,6 +18,7 @@ struct WorkspaceTab
     TextFileFormat format;
     QString ddlKey;
     QString schema; // 탭에서 고른 스키마 (다시 접속할 때 적용)
+    QString database; // 탭에서 고른 DB (PostgreSQL, 비면 접속 설정의 DB)
 };
 
 // 연결 창 하나의 탭들

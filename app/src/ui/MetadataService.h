@@ -10,6 +10,7 @@
 #include <QPointer>
 
 #include <functional>
+#include <map>
 #include <optional>
 
 class EngineClient;
@@ -17,6 +18,8 @@ class EngineClient;
 // 연결별 메타데이터(스키마, 객체, 컬럼) 조회와 캐시.
 // Database Explorer와 SQL 자동완성이 함께 쓴다. 연결마다 메타데이터 전용 세션(자동 커밋) 하나만 연다.
 // 같은 요청은 캐시에서 바로 답하고, 진행 중인 같은 요청은 하나로 묶는다.
+// 연결 id 자리에 Db::metadataId(연결 id, DB)를 주면 같은 연결의 다른 데이터베이스(PostgreSQL)로
+// 세션·캐시를 따로 둔다. 비밀번호는 원래 연결 것을 쓴다.
 class MetadataService : public QObject
 {
     Q_OBJECT
@@ -40,9 +43,9 @@ public:
     std::optional<QCborMap> cached(const QString &profileId, const QString &method, const QCborMap &params) const;
     bool isLoading(const QString &profileId, const QString &method, const QCborMap &params) const;
 
-    void invalidate(const QString &profileId); // DDL 뒤처럼 객체 목록이 바뀌었을 때
+    void invalidate(const QString &profileId); // DDL 뒤처럼 객체 목록이 바뀌었을 때 (연결 id면 그 연결의 다른 DB도)
     bool isConnected(const QString &profileId) const { return m_sessions.contains(profileId); }
-    void disconnectProfile(const QString &profileId);
+    void disconnectProfile(const QString &profileId); // 연결 id면 그 연결의 다른 DB 세션도 닫는다
 
 signals:
     void connectionChanged(const QString &profileId, bool connected);
@@ -58,6 +61,8 @@ private:
     QPointer<EngineClient> m_engine;
     SpecProvider m_specProvider;
     QList<ConnectionProfile> m_profiles;
+    // 다른 DB를 가리키는 id → DB만 바꾼 연결 사본. profile()이 포인터를 돌려주므로 주소가 바뀌지 않는 std::map
+    mutable std::map<QString, ConnectionProfile> m_variants;
     QHash<QString, QString> m_sessions;                 // 연결 id → 엔진 세션 id
     QHash<QString, QList<SessionCallback>> m_waiting;   // 접속 중인 연결 id → 기다리는 요청
     QHash<QString, QCborMap> m_cache;                   // cacheKey → 결과

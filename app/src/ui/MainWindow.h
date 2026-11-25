@@ -83,12 +83,16 @@ private:
 
     QueryTab *currentQueryTab() const;
     QList<QueryTab *> queryTabs() const;
+    // 새 쿼리 탭. 지금 보고 있는 DB(탐색기와 같은 DB)로 접속한다
     QueryTab *addQueryTab();
+    QueryTab *addQueryTabOn(const QString &database); // 비우면 접속 설정의 DB
+    // metadataId(연결 + DB)의 DB에 붙은 지금 쿼리 탭. 지금 탭이 다른 DB면 그 DB로 새 탭을 연다
+    QueryTab *queryTabFor(const QString &metadataId);
     // CLI 탭 (dbaro-cli 대화형을 창 안에서). 지금 쿼리 탭의 스키마로 시작한다.
     ConsoleTab *openConsole();
     void closeQueryTab(int index);
     void selectAdjacentTab(int step); // 다음(+1)·이전(-1) 탭. 끝에서는 반대쪽 끝으로
-    void openObject(const QString &connectionId, const QString &schema, const QString &name);
+    void openObject(const QString &metadataId, const QString &schema, const QString &name);
 
     void executeCurrent(bool wholeScript);
     // 바인드 변수가 있으면 값을 물어 문장에 넣는다. 취소하면 false.
@@ -96,14 +100,16 @@ private:
     void insertSql(QueryTab *tab, const QString &sql);
     void formatCurrent(); // 선택 영역(없으면 커서가 있는 문장)을 정렬한다
     void explainCurrent(bool actual);
-    void useSchema(const QString &connectionId, const QString &schema); // 탐색기에서: 지금 탭의 스키마를 바꾼다
+    void useSchema(const QString &metadataId, const QString &schema); // 탐색기에서: 지금 탭의 스키마를 바꾼다
     void switchSchema(QueryTab *tab, const QString &schema);
+    // PostgreSQL: 탭이 접속하는 DB를 바꾼다 (세션 안에서 못 바꿔서 그 DB로 다시 접속한다)
+    void switchDatabase(QueryTab *tab, const QString &database);
     void showDdlAtCursor();
     void showTableDetailsAtCursor();
-    void openTableDetails(const QString &schema, const QString &name, bool schemaQuoted, bool nameQuoted,
-                          const QString &currentSchema = {});
+    void openTableDetails(const QString &metadataId, const QString &schema, const QString &name, bool schemaQuoted,
+                          bool nameQuoted, const QString &currentSchema = {});
     // 엑셀·CSV 불러오기. table이 비면 새 테이블
-    void importData(const QString &schema, const QString &table);
+    void importData(const QString &metadataId, const QString &schema, const QString &table);
     void runImport(QueryTab *tab, const QStringList &statements, bool stopOnError, const QString &target);
     void requestDdl(const QString &connectionId, const QString &schema, const QString &name, bool schemaQuoted,
                     bool nameQuoted, QueryTab *source);
@@ -120,6 +126,12 @@ private:
     bool confirmDiscardTransaction(QueryTab *tab, const QString &action);
 
     void applyConnection(QueryTab *tab);
+    // 이 연결을 database로 접속하는 사본 (id는 그대로, 비밀번호를 같은 id로 찾는다). 비우면 접속 설정 그대로
+    ConnectionProfile profileOn(const QString &database) const;
+    // 지금 보고 있는 DB의 메타데이터 id (지금 쿼리 탭의 DB. 탐색기도 이 DB를 보인다)
+    QString activeMetadataId() const;
+    // 탐색기를 지금 보고 있는 DB로 맞춘다 (펼쳐 있었으면 다시 펼친다). force면 같은 DB여도 다시 만든다
+    void syncExplorerDatabase(bool force = false);
     void applyWindowColor();
     void updateConnectionStatus();
     void updateActionStates();
@@ -130,6 +142,9 @@ private:
 
     AppController *m_app = nullptr;
     QString m_connectionId;
+    QString m_activeDatabase; // 지금 보고 있는 DB (지금 쿼리 탭의 DB, 비면 접속 설정의 DB)
+    QString m_explorerId;     // 탐색기가 보이는 메타데이터 id
+    QString m_planObjectSource; // 객체 정보 창이 보이는 객체의 메타데이터 id
     QColor m_frameColor; // 연결의 환경 색 (환경이 없으면 유효하지 않음 → 띠 없음)
     bool m_hasSavedGeometry = false;
     QTimer *m_workspaceTimer = nullptr;

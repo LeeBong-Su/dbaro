@@ -36,6 +36,8 @@ wsl -u root -- docker compose -f /mnt/c/<저장소 경로>/dev/docker-compose.ym
 | PostgreSQL 17 | localhost:5432 | `dbaro` | `.env`의 `DB_USER` | `hr` |
 
 MySQL은 MariaDB와 포트가 겹치지 않게 3307로 열었다.
+PostgreSQL에는 두 번째 데이터베이스 `dbaro_archive`(스키마 `archive`, 테이블 `closed_order`)도 있다.
+쿼리 탭에서 DB를 바꿔 볼 때 쓴다. 그 전에 띄운 컨테이너에는 `seed/postgres/02-archive-db.sql` 첫머리의 명령으로 만든다.
 DBaro에서는 위 값으로 연결을 만들고 환경을 Development로 두면 된다.
 
 ## 샘플 스키마

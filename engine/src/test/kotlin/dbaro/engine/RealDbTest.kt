@@ -167,6 +167,18 @@ abstract class RealDbTest(
 
         val hrColumns = session.columns(hrSchema, n("region"))["columns"] as List<Map<String, Any?>>
         assertEquals(listOf(n("region_id"), n("region_name")), hrColumns.map { it["name"] })
+
+        // PostgreSQL만 데이터베이스 목록을 준다 (템플릿 제외). 다른 DB는 빈 목록
+        val databases = session.databases()
+        dump("databases", databases)
+        val databaseNames = databases["names"] as List<String>
+        if (type == "postgres") {
+            assertContains(databaseNames, database)
+            assertTrue(databaseNames.none { it.startsWith("template") }, "templates: $databaseNames")
+            assertEquals(database, databases["current"])
+        } else {
+            assertTrue(databaseNames.isEmpty(), "$type: $databaseNames")
+        }
     }
 
     @Test

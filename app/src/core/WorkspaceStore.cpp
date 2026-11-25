@@ -32,6 +32,7 @@ WorkspaceTab tabFromJson(const QJsonObject &object)
     tab.format.crlf = object.value(QStringLiteral("crlf")).toBool();
     tab.ddlKey = object.value(QStringLiteral("ddlKey")).toString();
     tab.schema = object.value(QStringLiteral("schema")).toString();
+    tab.database = object.value(QStringLiteral("database")).toString();
     return tab;
 }
 
@@ -56,6 +57,8 @@ QJsonObject tabToJson(const WorkspaceTab &tab)
         object.insert(QStringLiteral("ddlKey"), tab.ddlKey);
     if (!tab.schema.isEmpty())
         object.insert(QStringLiteral("schema"), tab.schema);
+    if (!tab.database.isEmpty())
+        object.insert(QStringLiteral("database"), tab.database);
     return object;
 }
 } // namespace

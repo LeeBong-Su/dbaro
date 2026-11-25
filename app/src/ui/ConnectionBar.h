@@ -13,6 +13,7 @@ class QLabel;
 // 연결 이름, 접속 대상(DB 종류·호스트·DB·사용자), 상태, 환경·읽기 전용·커밋 안 된 변경 배지.
 // 배경에 환경 색을 은은하게 깔고(운영은 더 진하게), 왼쪽에 환경 색 막대를 둔다.
 // 접속하면 이름 옆에 이 탭의 지금 스키마(MySQL·MariaDB는 데이터베이스)가 목록으로 나와서 바로 바꿀 수 있다.
+// PostgreSQL은 그 앞에 데이터베이스 목록도 나온다 (고르면 탭이 그 DB로 다시 접속한다).
 class ConnectionBar : public QWidget
 {
     Q_OBJECT
@@ -28,12 +29,18 @@ public:
     void setSchemas(const QStringList &schemas);   // 고를 수 있는 스키마 목록
     QString schemaText() const;                    // 보이는 지금 스키마 (안 보이면 빈 값)
     QComboBox *schemaCombo() const { return m_schemaCombo; }
+    // 이 탭이 접속하는 DB (비우면 접속 설정의 DB)와 고를 수 있는 DB 목록 (PostgreSQL)
+    void setDatabase(const QString &database);
+    void setDatabases(const QStringList &databases);
+    QString databaseText() const; // 보이는 지금 DB (목록이 안 보이면 빈 값)
+    QComboBox *databaseCombo() const { return m_databaseCombo; }
 
     QString nameText() const;
     QString stateText() const;
 
 signals:
     void schemaChosen(const QString &schema); // 목록에서 다른 스키마를 골랐다
+    void databaseChosen(const QString &database); // 목록에서 다른 DB를 골랐다 (DB 이름 그대로)
 
 protected:
     void paintEvent(QPaintEvent *event) override;
@@ -42,7 +49,9 @@ protected:
 private:
     void refresh();
     void refreshSchemaItems();
-    static QString target(const ConnectionProfile &profile);
+    void refreshDatabaseItems();
+    QString shownDatabase() const; // 고른 DB, 없으면 접속 설정의 DB
+    QString target(const ConnectionProfile &profile) const;
 
     std::optional<ConnectionProfile> m_profile;
     State m_state = State::NotConnected;
@@ -50,11 +59,15 @@ private:
     QString m_serverInfo;
     QString m_schema;
     QStringList m_schemas;
+    QString m_database;
+    QStringList m_databases;
 
     QLabel *m_dot = nullptr;
     QLabel *m_name = nullptr;
     QLabel *m_schemaCaption = nullptr;
     QComboBox *m_schemaCombo = nullptr;
+    QLabel *m_databaseCaption = nullptr;
+    QComboBox *m_databaseCombo = nullptr;
     QLabel *m_details = nullptr;
     QLabel *m_environment = nullptr;
     QLabel *m_readOnly = nullptr;

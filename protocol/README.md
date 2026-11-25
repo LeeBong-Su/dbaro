@@ -46,6 +46,7 @@ CBOR는 JSON처럼 다루기 쉬운 바이너리 형식이다. Qt에 기본으�
 | `commit` / `rollback` | `sessionId` | |
 | `setAutoCommit` | `sessionId`, `autoCommit` | |
 | `metaSchemas` | `sessionId` | `names`(정렬된 스키마 이름, MySQL·MariaDB는 데이터베이스), `current`(지금 접속한 스키마) |
+| `metaDatabases` | `sessionId` | `names`(같은 서버에서 접속할 수 있는 데이터베이스, 템플릿 제외), `current`(지금 접속한 데이터베이스). PostgreSQL만, 다른 DB는 빈 목록. PostgreSQL은 세션 안에서 데이터베이스를 바꿀 수 없어서 앱이 그 데이터베이스로 새로 접속한다 |
 | `metaObjects` | `sessionId`, `schema` | `objects`: `name`, `type`(드라이버가 주는 TABLE, VIEW, ... 와 FUNCTION, PROCEDURE), `remarks` / `truncated`(2만 개 초과) |
 | `metaColumns` | `sessionId`, `schema`, `table` | `columns`: `name`, `type`(예: `VARCHAR2(40)`, `NUMBER(10,2)`), `nullable`, `primaryKey`, `default`, `remarks` |
 

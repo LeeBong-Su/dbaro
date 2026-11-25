@@ -177,6 +177,33 @@ QString Db::jdbcUrl(const ConnectionProfile &profile)
     return {};
 }
 
+namespace {
+// 연결 id는 UUID라 이 글자가 들어가지 않는다
+const QString kDatabaseSeparator = QStringLiteral("#db=");
+} // namespace
+
+bool Db::canSwitchDatabase(DbType type)
+{
+    return type == DbType::PostgreSQL;
+}
+
+QString Db::metadataId(const QString &profileId, const QString &database)
+{
+    return database.isEmpty() ? profileId : profileId + kDatabaseSeparator + database;
+}
+
+QString Db::baseProfileId(const QString &metadataId)
+{
+    const qsizetype at = metadataId.indexOf(kDatabaseSeparator);
+    return at < 0 ? metadataId : metadataId.left(at);
+}
+
+QString Db::databaseOf(const QString &metadataId)
+{
+    const qsizetype at = metadataId.indexOf(kDatabaseSeparator);
+    return at < 0 ? QString() : metadataId.mid(at + kDatabaseSeparator.size());
+}
+
 QList<Environment> Env::all()
 {
     return {Environment::None, Environment::Development, Environment::Test, Environment::Staging,
