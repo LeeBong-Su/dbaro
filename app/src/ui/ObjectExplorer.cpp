@@ -250,7 +250,11 @@ void ObjectExplorer::setConnections(const QList<ConnectionProfile> &profiles)
         item->setEditable(false);
         item->setData(ConnectionKind, KindRole);
         item->setData(profile.id, ConnectionIdRole);
-        item->setData(Db::typeName(profile.type), DetailRole);
+        // PostgreSQL은 탭마다 DB를 고를 수 있으므로 지금 보이는 DB도 적는다
+        item->setData(Db::canSwitchDatabase(profile.type) && !profile.database.isEmpty()
+                          ? QStringLiteral("%1 · %2").arg(Db::typeName(profile.type), profile.database)
+                          : Db::typeName(profile.type),
+                      DetailRole);
         item->setToolTip(QStringLiteral("%1 — %2").arg(Db::typeName(profile.type), Db::jdbcUrl(profile)));
         setPlaceholder(item, tr("Expand to connect"));
         m_model->appendRow(item);
@@ -263,6 +267,12 @@ void ObjectExplorer::expandConnection(const QString &connectionId)
 {
     if (QStandardItem *item = findConnection(connectionId))
         expandItem(item);
+}
+
+bool ObjectExplorer::isConnectionExpanded(const QString &connectionId) const
+{
+    QStandardItem *item = findConnection(connectionId);
+    return item && m_tree->isExpanded(m_proxy->mapFromSource(item->index()));
 }
 
 void ObjectExplorer::setConnectedLook(const QString &profileId, bool connected)

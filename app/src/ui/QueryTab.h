@@ -38,6 +38,13 @@ public:
     QString connectionId() const { return m_connectionId; }
     void setConnectionId(const QString &id);
 
+    // 이 탭이 접속하는 데이터베이스 (PostgreSQL에서 고른 것). 비어 있으면 접속 설정의 기본 DB.
+    // 바꾸면 자동완성·스키마 목록이 그 DB를 따른다 (다시 접속은 MainWindow가 한다).
+    QString database() const { return m_database; }
+    void setDatabase(const QString &database);
+    // 자동완성·탐색기·DDL이 쓰는 메타데이터 id (Db::metadataId: 연결 id + 고른 DB)
+    QString metadataId() const;
+
     // 자동완성이 쓸 메타데이터 (Explorer와 같은 캐시)
     void setMetadataService(MetadataService *metadata);
 
@@ -79,6 +86,7 @@ public:
 signals:
     void cursorPositionChanged(int line, int column);
     void schemaSwitchRequested(const QString &schema); // 연결 정보 막대에서 다른 스키마를 골랐다
+    void databaseSwitchRequested(const QString &database); // 연결 정보 막대에서 다른 DB를 골랐다
 
 private:
     void showError(const SqlStatement &statement, const EngineError &error);
@@ -87,9 +95,12 @@ private:
     void onStatementSucceeded(const SqlStatement &statement);
     void onSchemaChanged(const QString &schema);
     void loadSchemaList();
+    void loadDatabaseList();
     void updateConnectionBar();
 
     QString m_connectionId;
+    QString m_database;
+    bool m_canSwitchDatabase = false;
     QString m_filePath;
     QHash<QString, QString> m_defines;
     TextFileFormat m_fileFormat;

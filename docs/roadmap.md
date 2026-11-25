@@ -42,6 +42,12 @@
 - [x] 오래 걸리는 쿼리·F4 DDL·테이블 상세를 기다리는 동안 SQL 탭에 표시
   0.4초가 넘으면 결과 영역에 카드(돌아가는 원호, 하는 일, 문장, 흐르는 시간, Cancel. 결과는 흐리게, Log·Output은 오른쪽 위에 작게), 탭 아이콘에 돌아가는 원호, F4는 에디터 오른쪽 위 알림.
 
+- [x] 연결 선택 창 목록: 컬럼별 정렬, 너비·순서 바꾸기, 그 상태 저장
+  머리글을 누르면 오름 → 내림 → 최근 순(대소문자 무시, 숫자는 크기대로, 환경은 개발 → 운영 순). 같은 값은 최근 순서 유지. 끌어서 순서·너비 변경(이름 컬럼도), 머리글 오른쪽 클릭 Reset Columns. 설정 `launcher/columns`에 저장, 시작할 때는 정렬과 상관없이 마지막에 연 연결을 고른다.
+
+- [x] PostgreSQL 쿼리 탭에서 데이터베이스 바꾸기
+  연결 정보 막대의 Database 목록(엔진 `metaDatabases`). 세션 안에서는 못 바꿔서 그 탭만 그 DB로 다시 접속한다(커밋 안 된 변경은 먼저 확인). 탭마다 기억해서 다시 켜도 유지, 자동완성·스키마 목록·DDL·테이블 상세는 그 탭의 DB, 탐색기·새 탭·CLI 탭은 지금 탭의 DB를 따른다. 개발용 두 번째 DB `dbaro_archive`(`dev/seed/postgres/02-archive-db.sql`).
+
 ## 2차개선
 
 - [ ] 리버스 엔지니어링 (DB 구조 → 모델·ERD·DDL 스크립트)
@@ -50,12 +56,15 @@
 - [ ] AI 에이전트형 DB 도구 (AI 모델 연결)
 - [x] 실제 실행 계획 (실행해서 얻은 계획과 통계), 단축키 Alt+X: Oracle `V$SQL_PLAN_STATISTICS_ALL`·`DISPLAY_CURSOR ADVANCED ALLSTATS LAST`, PostgreSQL `EXPLAIN ANALYZE`, MySQL `EXPLAIN ANALYZE`, MariaDB `ANALYZE`. DML은 실행 후 되돌림, 예상과 크게 다른 행 수는 칠함, Oracle은 ADVANCED ALLSTATS LAST 글을 먼저 보임. Tibero는 아직
 
+- [x] 실제 DB(Oracle Free, PostgreSQL, MySQL, MariaDB 컨테이너)로 확인하는 환경
+  `dev/docker-compose.yml`을 띄우면 샘플 스키마(`dev/seed`: FK·두 컬럼 FK·자기 참조, 10만 행, 파티션, 여러 자료형, 뷰·루틴·트리거, 다른 스키마)가 들어가고, `dev/.env`가 있으면 엔진 테스트가 네 DB로도 돈다(`RealDbTest`). 확인하며 고친 것: Oracle 실제 계획 OMem·1Mem·Used-Mem이 1024배로 나오던 것(바이트였음), MySQL·MariaDB 계획의 테이블이 별칭으로 나와 객체 정보가 안 열리던 것, BIGINT UNSIGNED 최댓값·BIT(n)·YEAR 값, PostgreSQL 분할 테이블 DDL(PARTITION BY·파티션)과 프로시저 종류, Oracle DDL에 제약 인덱스가 따로 나와 다시 실행하면 오류 나던 것, PostgreSQL 자동완성에 인덱스가 테이블처럼 나오던 것. 앱 화면(자동완성 FK JOIN, 실행 중 표시·취소, Alt+X, 결과 편집)도 네 DB에서 확인했다.
+
 ## 그 밖의 후보
 
 - 세션·락 모니터, 세션 종료 (V$SESSION, pg_stat_activity, processlist)
 - 테이블스페이스·DB 크기 사용량
 - 스키마 비교 (개발 ↔ 운영 DDL 차이)
-- 실제 DB(Oracle Free, PostgreSQL, MariaDB 컨테이너)로 확인하는 환경
 - MSI 다시 빌드해서 설치 확인 (작업 표시줄 고정 아이콘·점프 목록)
+- 코드 서명 인증서 마련 (스크립트는 `DBARO_SIGN_ARGS`로 서명할 준비가 돼 있다. 스마트 앱 제어가 켜진 PC는 서명이 없으면 실행을 막는다)
 - 한국어 화면
 - Linux 빌드 (macOS는 GitHub Actions `macOS package`로 Apple Silicon DMG를 만든다. Intel Mac, Apple 서명·공증은 아직)

@@ -38,6 +38,7 @@ public:
     void setConnections(const QList<ConnectionProfile> &profiles);
     // 연결 항목을 펼친다 (스키마 목록을 가져오고 지금 스키마를 펼친다)
     void expandConnection(const QString &connectionId);
+    bool isConnectionExpanded(const QString &connectionId) const;
 
     QTreeView *tree() const { return m_tree; }
     QStandardItemModel *model() const { return m_model; }

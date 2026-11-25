@@ -95,7 +95,11 @@ object Connector {
                 properties.setProperty("v\$session.program", CLIENT_NAME)
             }
             "postgres" -> properties.setProperty("connectTimeout", timeoutSec.toString())
-            "mysql", "mariadb" -> properties.setProperty("connectTimeout", (timeoutSec * 1000).toString())
+            "mysql", "mariadb" -> {
+                properties.setProperty("connectTimeout", (timeoutSec * 1000).toString())
+                // YEAR를 날짜(2024-01-01)가 아니라 연도 숫자로
+                properties.setProperty("yearIsDateType", "false")
+            }
         }
         return properties
     }

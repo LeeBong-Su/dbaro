@@ -4,6 +4,9 @@
   - 사용자별 설치가 기본이다: 더블클릭하면 관리자 권한 없이 %LOCALAPPDATA%\Programs\DBaro 에 설치된다.
     관리자는 "msiexec /i DBaro.msi ALLUSERS=1" 로 전체 사용자용(Program Files)으로 설치할 수 있다.
   - 설치 파일은 package-windows.ps1 이 만든 배포 폴더(-bindpath Stage=...)를 통째로 담는다.
+  - 화면은 시작 → 설치 준비 → 진행 → 완료 순서다. 완료 화면에 설치 위치와 만든 바로 가기를 보여 주고,
+    "DBaro 실행"을 체크한 채 마치면 바로 실행한다. 화면 글은 DBaro.ko-KR.wxl 에 있다.
+  - 시작 메뉴와 바탕 화면에 바로 가기를 만든다. 바탕 화면 바로 가기는 DESKTOPSHORTCUT=0 으로 뺄 수 있다.
   - UpgradeCode는 절대 바꾸지 않는다. 바꾸면 기존 설치를 업그레이드하지 못하고 따로 설치된다.
   - 사용자 데이터(%APPDATA%\DBaro, 자격 증명 관리자, HKCU\Software\DBaro\DBaro)는 제거해도 남는다.
 -->
@@ -11,15 +14,19 @@
   <Package Name="DBaro"
            Manufacturer="DBaro"
            Version="$(var.Version)"
+           Language="!(loc.PackageLanguage)"
            UpgradeCode="FE197C7F-2B18-425E-BD71-F42D51C2027E"
            Scope="perUserOrMachine"
            Compressed="yes">
 
     <SummaryInformation Description="DBaro $(var.Version) - cross-platform database tool" />
 
-    <!-- 새 버전이 이전 버전을 대신한다. 같은 버전을 다시 설치해도 덮어쓴다 (개발 중 재설치). -->
+    <!-- 새 버전이 이전 버전을 대신한다. 같은 버전을 다시 설치해도 덮어쓴다 (개발 중 재설치).
+         IgnoreLanguage: 설치 화면 언어가 다른 이전 설치본(0.1.0 첫 MSI는 영어 1033)도 찾아서 지운다.
+         빼면 언어가 다른 설치본을 못 찾고 같은 폴더에 하나 더 설치된다. -->
     <MajorUpgrade AllowSameVersionUpgrades="yes"
-                  DowngradeErrorMessage="A newer version of DBaro is already installed." />
+                  IgnoreLanguage="yes"
+                  DowngradeErrorMessage="!(loc.DowngradeError)" />
 
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
 
@@ -29,17 +36,20 @@
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/LeeBong-Su/dbaro" />
     <Property Id="ARPNOMODIFY" Value="1" />
 
+    <!-- 바탕 화면 바로 가기 (기본 만듦). 명령줄 설치에서 DESKTOPSHORTCUT=0 이면 만들지 않는다. -->
+    <Property Id="DESKTOPSHORTCUT" Value="1" Secure="yes" />
+
     <StandardDirectory Id="ProgramFiles6432Folder">
       <Directory Id="INSTALLFOLDER" Name="DBaro">
         <Files Include="!(bindpath.Stage)\**" />
       </Directory>
     </StandardDirectory>
 
-    <!-- 시작 메뉴 바로 가기. 사용자별 설치에서도 동작하도록 키 경로는 HKMU(사용자별이면 HKCU) 레지스트리 값이다. -->
+    <!-- 바로 가기. 사용자별 설치에서도 동작하도록 키 경로는 HKMU(사용자별이면 HKCU) 레지스트리 값이다.
+         System.AppUserModel.ID는 앱이 쓰는 값(WindowsIntegration의 DBaro.Desktop)과 같아야
+         작업 표시줄에 고정한 아이콘, 열린 창들, 점프 목록(저장된 연결)이 한 아이콘으로 묶인다. -->
     <StandardDirectory Id="ProgramMenuFolder">
       <Component Id="StartMenuShortcut">
-        <!-- System.AppUserModel.ID는 앱이 쓰는 값(WindowsIntegration의 DBaro.Desktop)과 같아야
-             작업 표시줄에 고정한 아이콘, 열린 창들, 점프 목록(저장된 연결)이 한 아이콘으로 묶인다. -->
         <Shortcut Id="DBaroShortcut"
                   Name="DBaro"
                   Description="Cross-platform database tool"
@@ -52,5 +62,72 @@
                        Type="integer" Value="1" KeyPath="yes" />
       </Component>
     </StandardDirectory>
+
+    <StandardDirectory Id="DesktopFolder">
+      <Component Id="DesktopShortcut" Condition="DESKTOPSHORTCUT = 1">
+        <Shortcut Id="DBaroDesktopShortcut"
+                  Name="DBaro"
+                  Description="Cross-platform database tool"
+                  Target="[INSTALLFOLDER]dbaro.exe"
+                  WorkingDirectory="INSTALLFOLDER"
+                  Icon="DBaroIcon">
+          <ShortcutProperty Key="System.AppUserModel.ID" Value="DBaro.Desktop" />
+        </Shortcut>
+        <RegistryValue Root="HKMU" Key="Software\DBaro\Installer" Name="DesktopShortcut"
+                       Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+
+    <!-- 설치 화면 그림 (packaging\windows\installer-*.png 를 빌드 스크립트가 BMP로 바꿔 넘긴다) -->
+    <WixVariable Id="WixUIDialogBmp" Value="$(var.DialogBmp)" />
+    <WixVariable Id="WixUIBannerBmp" Value="$(var.BannerBmp)" />
+
+    <!-- 완료 화면: 무엇을 어디에 설치했는지 알려 준다. 설치 폴더는 이때 정해진 경로로 채운다
+         (속성 값 안의 [INSTALLFOLDER]는 화면에서 다시 풀리지 않으므로 SetProperty로 미리 풀어 둔다). -->
+    <SetProperty Id="WIXUI_EXITDIALOGOPTIONALTEXT" Action="SetExitTextWithDesktop"
+                 Value="!(loc.ExitTextWithDesktop)" After="CostFinalize" Sequence="ui"
+                 Condition="NOT Installed AND DESKTOPSHORTCUT = 1" />
+    <SetProperty Id="WIXUI_EXITDIALOGOPTIONALTEXT" Action="SetExitTextNoDesktop"
+                 Value="!(loc.ExitTextNoDesktop)" After="CostFinalize" Sequence="ui"
+                 Condition="NOT Installed AND NOT (DESKTOPSHORTCUT = 1)" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="!(loc.LaunchCheckBox)" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+    <CustomAction Id="LaunchDBaro" Directory="INSTALLFOLDER"
+                  ExeCommand="&quot;[INSTALLFOLDER]dbaro.exe&quot;" Return="asyncNoWait" />
+
+    <!-- 설치 화면 순서. WixUI_Minimal에서 사용권 화면을 빼고 시작 → 설치 준비로 잇는다.
+         다시 실행하면(이미 설치됨) 복구/제거 화면이 나온다. -->
+    <UI Id="DBaroUI">
+      <TextStyle Id="WixUI_Font_Normal" FaceName="Tahoma" Size="8" />
+      <TextStyle Id="WixUI_Font_Bigger" FaceName="Tahoma" Size="12" />
+      <TextStyle Id="WixUI_Font_Title" FaceName="Tahoma" Size="9" Bold="yes" />
+      <Property Id="DefaultUIFont" Value="WixUI_Font_Normal" />
+
+      <DialogRef Id="ErrorDlg" />
+      <DialogRef Id="FatalError" />
+      <DialogRef Id="FilesInUse" />
+      <DialogRef Id="MsiRMFilesInUse" />
+      <DialogRef Id="PrepareDlg" />
+      <DialogRef Id="ProgressDlg" />
+      <DialogRef Id="ResumeDlg" />
+      <DialogRef Id="UserExit" />
+      <DialogRef Id="WelcomeDlg" />
+
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" />
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="1"
+               Condition="NOT Installed OR PATCH" />
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="MaintenanceTypeDlg" Order="2"
+               Condition="Installed AND NOT PATCH" />
+
+      <Publish Dialog="MaintenanceWelcomeDlg" Control="Next" Event="NewDialog" Value="MaintenanceTypeDlg" />
+      <Publish Dialog="MaintenanceTypeDlg" Control="RepairButton" Event="NewDialog" Value="VerifyReadyDlg" />
+      <Publish Dialog="MaintenanceTypeDlg" Control="RemoveButton" Event="NewDialog" Value="VerifyReadyDlg" />
+      <Publish Dialog="MaintenanceTypeDlg" Control="Back" Event="NewDialog" Value="MaintenanceWelcomeDlg" />
+
+      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchDBaro" Order="1"
+               Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed" />
+      <Publish Dialog="ExitDialog" Control="Finish" Event="EndDialog" Value="Return" Order="999" />
+    </UI>
+    <UIRef Id="WixUI_Common" />
   </Package>
 </Wix>

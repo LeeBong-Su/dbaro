@@ -34,6 +34,7 @@ void MetadataService::setProfiles(const QList<ConnectionProfile> &profiles)
 {
     disconnectAll();
     m_profiles = profiles;
+    m_variants.clear();
     m_cache.clear();
 }
 
@@ -43,7 +44,18 @@ const ConnectionProfile *MetadataService::profile(const QString &profileId) cons
         if (profile.id == profileId)
             return &profile;
     }
-    return nullptr;
+    // 같은 연결의 다른 데이터베이스: DB만 바꾼 사본 (연결 설정이 바뀌면 다시 맞춘다)
+    const QString baseId = Db::baseProfileId(profileId);
+    if (baseId == profileId)
+        return nullptr;
+    const ConnectionProfile *base = profile(baseId);
+    if (!base || !Db::canSwitchDatabase(base->type))
+        return nullptr;
+    ConnectionProfile &variant = m_variants[profileId];
+    variant = *base;
+    variant.id = profileId;
+    variant.database = Db::databaseOf(profileId);
+    return &variant;
 }
 
 QString MetadataService::cacheKey(const QString &profileId, const QString &method, const QCborMap &params)
@@ -74,9 +86,11 @@ bool MetadataService::isLoading(const QString &profileId, const QString &method,
 
 void MetadataService::invalidate(const QString &profileId)
 {
-    const QString prefix = profileId + QChar(0x1f);
+    // 연결 id면 그 연결의 다른 DB 캐시도 (DB를 가리키는 id면 그 DB만)
+    const bool wholeConnection = Db::baseProfileId(profileId) == profileId;
     for (auto it = m_cache.begin(); it != m_cache.end();) {
-        if (it.key().startsWith(prefix))
+        const QString owner = it.key().section(QChar(0x1f), 0, 0);
+        if (owner == profileId || (wholeConnection && Db::baseProfileId(owner) == profileId))
             it = m_cache.erase(it);
         else
             ++it;
@@ -145,8 +159,11 @@ void MetadataService::withSession(const QString &profileId, bool interactive, Se
         callback({}, tr("The connection is not available."));
         return;
     }
+    // 다른 DB를 가리키는 id여도 비밀번호는 원래 연결 id로 찾는다
+    ConnectionProfile target = *connection;
+    target.id = Db::baseProfileId(profileId);
     ConnectSpec spec;
-    if (!m_specProvider || !m_specProvider(*connection, &spec, interactive)) {
+    if (!m_specProvider || !m_specProvider(target, &spec, interactive)) {
         callback({}, interactive ? tr("Connection cancelled.") : tr("Not connected yet."));
         return;
     }
@@ -184,6 +201,14 @@ void MetadataService::withSession(const QString &profileId, bool interactive, Se
 
 void MetadataService::disconnectProfile(const QString &profileId)
 {
+    if (Db::baseProfileId(profileId) == profileId) {
+        // 그 연결의 다른 DB 세션도 닫는다
+        const QStringList ids = m_sessions.keys();
+        for (const QString &id : ids) {
+            if (id != profileId && Db::baseProfileId(id) == profileId)
+                disconnectProfile(id);
+        }
+    }
     const QString sessionId = m_sessions.take(profileId);
     if (!sessionId.isEmpty() && m_engine) {
         QCborMap params;

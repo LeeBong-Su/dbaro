@@ -140,6 +140,7 @@ class Server(input: InputStream, output: OutputStream, private val drivers: Driv
                 it.executeBatch(params.stringList("statements"), params.bool("stopOnError", true))
             }
             "metaSchemas" -> withSession(id, params) { it.schemas() }
+            "metaDatabases" -> withSession(id, params) { it.databases() }
             "currentSchema" -> withSession(id, params) { mapOf("schema" to it.currentSchema()) }
             "setSchema" -> withSession(id, params) { it.setSchema(params.string("schema")) }
             "metaObjects" -> withSession(id, params) { it.objects(params.string("schema")) }

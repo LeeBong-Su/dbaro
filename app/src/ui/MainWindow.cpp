@@ -165,6 +165,9 @@ MainWindow::MainWindow(AppController *app, const QString &connectionId, QWidget 
             updateCursorPosition(cursor.blockNumber() + 1, cursor.positionInBlock() + 1);
             m_encodingLabel->setText(tab->filePath().isEmpty() ? QStringLiteral("UTF-8")
                                                                : TextFile::encodingName(tab->fileFormat()));
+            // 탐색기와 새 탭은 지금 탭의 DB를 따른다 (PostgreSQL에서 DB를 바꾼 탭)
+            m_activeDatabase = tab->database();
+            syncExplorerDatabase();
         }
         updateConnectionStatus();
         updateActionStates();
@@ -197,9 +200,11 @@ void MainWindow::refreshConnection()
     if (!p)
         return; // 지운 연결: AppController가 창을 닫는다
     setWindowTitle(QStringLiteral("%1 — DBaro").arg(p->name));
-    m_explorer->setConnections({*p});
     for (QueryTab *tab : queryTabs())
         applyConnection(tab);
+    if (!Db::canSwitchDatabase(p->type) || m_activeDatabase == p->database)
+        m_activeDatabase.clear();
+    syncExplorerDatabase(true);
     applyWindowColor();
     updateConnectionStatus();
     updateActionStates();
@@ -426,7 +431,7 @@ void MainWindow::createActions()
 
     m_importAction = new QAction(tr("Import Data..."), this);
     m_importAction->setToolTip(tr("Load an Excel (.xlsx) or CSV file into a table"));
-    connect(m_importAction, &QAction::triggered, this, [this] { importData(QString(), QString()); });
+    connect(m_importAction, &QAction::triggered, this, [this] { importData(activeMetadataId(), QString(), QString()); });
 
     m_cancelAction = new QAction(Icons::get(QStringLiteral("stop")), tr("Cancel"), this);
     m_cancelAction->setToolTip(tr("Cancel the running statement"));
@@ -490,9 +495,11 @@ void MainWindow::createDocks()
                 requestDdl(connectionId, schema, name, true, true, currentQueryTab());
             });
     connect(m_explorer, &ObjectExplorer::tableDetailsRequested, this,
-            [this](const QString &, const QString &schema, const QString &name) { openTableDetails(schema, name, true, true); });
+            [this](const QString &id, const QString &schema, const QString &name) {
+                openTableDetails(id, schema, name, true, true);
+            });
     connect(m_explorer, &ObjectExplorer::importRequested, this,
-            [this](const QString &, const QString &schema, const QString &name) { importData(schema, name); });
+            [this](const QString &id, const QString &schema, const QString &name) { importData(id, schema, name); });
     connect(m_explorer, &ObjectExplorer::insertTextRequested, this, [this](const QString &text) {
         if (QueryTab *tab = currentQueryTab()) {
             tab->editor()->insertPlainText(text);
@@ -500,7 +507,7 @@ void MainWindow::createDocks()
         }
     });
     connect(m_explorer, &ObjectExplorer::editConnectionRequested, this,
-            [this](const QString &id) { m_app->editConnections(this, false, id); });
+            [this](const QString &id) { m_app->editConnections(this, false, Db::baseProfileId(id)); });
 
     m_explorerDock = new QDockWidget(tr("Database Explorer"), this);
     m_explorerDock->setObjectName(QStringLiteral("explorerDock"));
@@ -718,6 +725,7 @@ void MainWindow::saveWorkspace()
         saved.cursor = tab->editor()->textCursor().position();
         saved.ddlKey = tab->property("dbaroDdlKey").toString();
         saved.schema = tab->preferredSchema();
+        saved.database = tab->database();
         workspace.tabs.append(saved);
     }
     workspace.current = m_tabs->currentIndex();
@@ -758,6 +766,12 @@ bool MainWindow::restoreWorkspace()
         }
         if (!saved.ddlKey.isEmpty())
             tab->setProperty("dbaroDdlKey", saved.ddlKey);
+        {
+            // 아직 접속 전이다 (창이 보이면 이 DB로 접속한다). 접속 설정의 DB면 기본으로
+            const ConnectionProfile *p = profile();
+            const bool keep = p && Db::canSwitchDatabase(p->type) && saved.database != p->database;
+            tab->setDatabase(keep ? saved.database : QString());
+        }
         tab->setPreferredSchema(saved.schema);
         tab->editor()->setPlainText(text);
         tab->editor()->document()->setModified(saved.modified);
@@ -773,8 +787,11 @@ bool MainWindow::restoreWorkspace()
     if (m_tabs->count() == 0)
         return false;
     m_tabs->setCurrentIndex(qBound(0, workspace.current, m_tabs->count() - 1));
-    if (QueryTab *tab = currentQueryTab())
+    if (QueryTab *tab = currentQueryTab()) {
         tab->editor()->setFocus();
+        m_activeDatabase = tab->database(); // 같은 탭이면 currentChanged가 오지 않는다
+    }
+    syncExplorerDatabase();
     return true;
 }
 
@@ -947,11 +964,13 @@ ConsoleTab *MainWindow::openConsole()
     QString password;
     if (!m_app->passwordFor(*profile, &password, true, this))
         return nullptr;
-    ConnectSpec spec = m_app->connectSpec(*profile, password, m_autoCommitAction->isChecked());
+    // 보고 있던 탭의 DB·스키마에서 이어서
+    const ConnectionProfile target = profileOn(m_activeDatabase);
+    ConnectSpec spec = m_app->connectSpec(target, password, m_autoCommitAction->isChecked());
     if (QueryTab *current = currentQueryTab())
-        spec.schema = current->currentSchema(); // 보고 있던 탭의 스키마에서 이어서
+        spec.schema = current->currentSchema();
 
-    auto *console = new ConsoleTab(m_app->engine(), *profile, m_tabs);
+    auto *console = new ConsoleTab(m_app->engine(), target, m_tabs);
     // 실행 기록은 F8 목록에 바로 보이게 앱의 기록에 넣고, 위험한 문장은 쿼리 탭처럼 묻는다
     console->cli()->setHistorySink([this](const HistoryEntry &entry) { m_app->history().add(entry); });
     QPointer<ConsoleTab> guard(console);
@@ -1020,9 +1039,15 @@ void MainWindow::animateBusyTabs()
 
 QueryTab *MainWindow::addQueryTab()
 {
-    // 탭은 모두 이 창의 연결을 쓴다 (세션은 탭마다 따로 연다).
+    return addQueryTabOn(m_activeDatabase);
+}
+
+QueryTab *MainWindow::addQueryTabOn(const QString &database)
+{
+    // 탭은 모두 이 창의 연결을 쓴다 (세션은 탭마다 따로 연다). PostgreSQL은 탭마다 DB를 고를 수 있다.
     auto *tab = new QueryTab(m_app->engine(), m_tabs);
     tab->setMetadataService(m_app->metadata());
+    tab->setDatabase(database); // 탭을 고르면 바로 접속하므로 그 전에 정한다
     tab->session()->setAutoCommit(m_autoCommitAction->isChecked());
     connect(tab, &QueryTab::cursorPositionChanged, this, [this, tab](int line, int column) {
         if (tab == currentQueryTab())
@@ -1045,6 +1070,8 @@ QueryTab *MainWindow::addQueryTab()
                                                 : tr("%1: %2 occurrences").arg(word).arg(count));
     });
     connect(tab, &QueryTab::schemaSwitchRequested, this, [this, tab](const QString &schema) { switchSchema(tab, schema); });
+    connect(tab, &QueryTab::databaseSwitchRequested, this,
+            [this, tab](const QString &database) { switchDatabase(tab, database); });
     connect(tab->resultPanel(), &ResultPanel::planObjectRequested, this,
             [this, tab](const QCborMap &object) { showPlanObject(tab, object); });
     connect(tab->resultPanel(), &ResultPanel::exportFinished, this,
@@ -1074,6 +1101,9 @@ QueryTab *MainWindow::addQueryTab()
 void MainWindow::applyConnection(QueryTab *tab)
 {
     const ConnectionProfile *p = profile();
+    // DB를 바꿀 수 없게 됐거나(DB 종류를 바꿈) 고른 DB가 접속 설정의 DB가 되면 기본 DB로
+    if (p && (!Db::canSwitchDatabase(p->type) || tab->database() == p->database))
+        tab->setDatabase({});
     tab->setConnectionId(p ? m_connectionId : QString());
     tab->setConnectionProfile(p);
     tab->setDialect(p ? sqlDialectFor(p->type) : SqlDialect::Generic);
@@ -1081,13 +1111,54 @@ void MainWindow::applyConnection(QueryTab *tab)
     scheduleWorkspaceSave();
 }
 
-void MainWindow::openObject(const QString &connectionId, const QString &schema, const QString &name)
+ConnectionProfile MainWindow::profileOn(const QString &database) const
+{
+    ConnectionProfile target;
+    if (const ConnectionProfile *p = profile())
+        target = *p;
+    if (!database.isEmpty() && Db::canSwitchDatabase(target.type))
+        target.database = database;
+    return target;
+}
+
+QString MainWindow::activeMetadataId() const
+{
+    return Db::metadataId(m_connectionId, m_activeDatabase);
+}
+
+void MainWindow::syncExplorerDatabase(bool force)
+{
+    const ConnectionProfile *p = profile();
+    if (!p)
+        return;
+    const QString id = activeMetadataId();
+    if (id == m_explorerId && !force)
+        return;
+    // 다른 DB로 옮길 때 펼쳐 있었으면 그 DB도 펼친다 (같은 비밀번호로 접속한다)
+    const bool reopen = !force && !m_explorerId.isEmpty() && m_explorer->isConnectionExpanded(m_explorerId);
+    ConnectionProfile shown = profileOn(m_activeDatabase);
+    shown.id = id;
+    m_explorerId = id;
+    m_explorer->setConnections({shown});
+    if (reopen)
+        m_explorer->expandConnection(id);
+}
+
+QueryTab *MainWindow::queryTabFor(const QString &metadataId)
+{
+    QueryTab *tab = currentQueryTab();
+    if (tab && tab->metadataId() == metadataId)
+        return tab;
+    return addQueryTabOn(Db::databaseOf(metadataId));
+}
+
+void MainWindow::openObject(const QString &metadataId, const QString &schema, const QString &name)
 {
     const ConnectionProfile *profile = this->profile();
-    if (!profile || connectionId != m_connectionId)
+    if (!profile || Db::baseProfileId(metadataId) != m_connectionId)
         return;
     // 테이블·뷰를 두 번 클릭하면 새 탭에서 바로 조회한다 (결과는 페이지 단위로 가져온다).
-    QueryTab *tab = addQueryTab();
+    QueryTab *tab = addQueryTabOn(Db::databaseOf(metadataId));
     tab->setProperty(kTitleSource, kFixedTitle); // 연결 이름 대신 객체 이름을 제목으로 둔다
     m_tabs->setTabText(m_tabs->indexOf(tab), name);
     tab->editor()->setPlainText(
@@ -1347,12 +1418,50 @@ void MainWindow::insertSql(QueryTab *tab, const QString &sql)
     editor->setFocus();
 }
 
-void MainWindow::useSchema(const QString &connectionId, const QString &schema)
+void MainWindow::useSchema(const QString &metadataId, const QString &schema)
 {
-    // 지금 탭(없으면 새 탭)의 스키마를 바꿔 스키마 이름 없이 조회하게 한다.
-    if (connectionId != m_connectionId)
+    // 지금 탭(없거나 다른 DB면 새 탭)의 스키마를 바꿔 스키마 이름 없이 조회하게 한다.
+    if (Db::baseProfileId(metadataId) != m_connectionId)
         return;
-    switchSchema(currentQueryTab() ? currentQueryTab() : addQueryTab(), schema);
+    switchSchema(queryTabFor(metadataId), schema);
+}
+
+void MainWindow::switchDatabase(QueryTab *tab, const QString &chosen)
+{
+    const ConnectionProfile *p = profile();
+    if (!tab || !p || chosen.isEmpty() || !Db::canSwitchDatabase(p->type))
+        return;
+    const QString database = chosen == p->database ? QString() : chosen; // 접속 설정의 DB면 기본으로
+    if (database == tab->database())
+        return;
+    auto revert = [tab] { tab->connectionBar()->setDatabase(tab->database()); }; // 목록에서 고른 것을 되돌린다
+    if (tab->session()->isBusy()) {
+        tab->resultPanel()->appendLog(tr("The tab is busy. Change the database when the current statement finishes."), true);
+        tab->resultPanel()->showLog();
+        revert();
+        return;
+    }
+    if (!confirmDiscardTransaction(tab, tr("switch to database %1").arg(chosen))) {
+        revert();
+        return;
+    }
+
+    // PostgreSQL은 세션 안에서 DB를 바꿀 수 없다: 끊고 그 DB로 다시 접속한다.
+    // 스키마는 DB마다 다르므로 그 DB의 기본 스키마(search_path)에서 시작한다.
+    tab->session()->disconnectFromServer();
+    tab->setDatabase(database);
+    tab->setPreferredSchema({});
+    if (tab == currentQueryTab()) {
+        m_activeDatabase = database;
+        syncExplorerDatabase();
+    }
+    updateConnectionStatus();
+    scheduleWorkspaceSave();
+    QPointer<QueryTab> guard(tab);
+    withConnectedSession(tab, [this, guard, chosen] {
+        if (guard)
+            statusBar()->showMessage(tr("Connected to database %1").arg(chosen), 5000);
+    });
 }
 
 void MainWindow::switchSchema(QueryTab *tab, const QString &schema)
@@ -1405,14 +1514,14 @@ void MainWindow::showDdlAtCursor()
         return;
     }
     // 스키마 없이 쓴 이름은 이 탭의 지금 스키마에서 찾는다 (requestDdl이 source 탭에서 가져간다)
-    requestDdl(tab->connectionId(), name->schema, name->name, name->schemaQuoted, name->nameQuoted, tab);
+    requestDdl(tab->metadataId(), name->schema, name->name, name->schemaQuoted, name->nameQuoted, tab);
 }
 
 void MainWindow::showTableDetailsAtCursor()
 {
     QString explorerConnection, explorerSchema, explorerName;
     if (m_explorer->tree()->hasFocus() && m_explorer->selectedObject(&explorerConnection, &explorerSchema, &explorerName)) {
-        openTableDetails(explorerSchema, explorerName, true, true);
+        openTableDetails(explorerConnection, explorerSchema, explorerName, true, true);
         return;
     }
     QueryTab *tab = currentQueryTab();
@@ -1424,26 +1533,28 @@ void MainWindow::showTableDetailsAtCursor()
         tab->resultPanel()->showLog();
         return;
     }
-    openTableDetails(name->schema, name->name, name->schemaQuoted, name->nameQuoted, tab->currentSchema());
+    openTableDetails(tab->metadataId(), name->schema, name->name, name->schemaQuoted, name->nameQuoted, tab->currentSchema());
 }
 
-void MainWindow::openTableDetails(const QString &schema, const QString &name, bool schemaQuoted, bool nameQuoted,
-                                  const QString &currentSchema)
+void MainWindow::openTableDetails(const QString &metadataId, const QString &schema, const QString &name, bool schemaQuoted,
+                                  bool nameQuoted, const QString &currentSchema)
 {
-    if (!profile())
+    if (!profile() || Db::baseProfileId(metadataId) != m_connectionId)
         return;
     const QString key = (schema.isEmpty() ? QString() : schema + u'.') + name;
     for (int i = 0; i < m_tabs->count(); ++i) {
         if (auto *existing = qobject_cast<TableDetailTab *>(m_tabs->widget(i));
-            existing && existing->property("dbaroDetailKey").toString().compare(key, Qt::CaseInsensitive) == 0) {
+            existing && existing->property("dbaroDetailSource").toString() == metadataId
+            && existing->property("dbaroDetailKey").toString().compare(key, Qt::CaseInsensitive) == 0) {
             m_tabs->setCurrentIndex(i);
             existing->refresh();
             return;
         }
     }
-    auto *detail = new TableDetailTab(m_app->metadata(), m_connectionId, schema, name, schemaQuoted, nameQuoted,
+    auto *detail = new TableDetailTab(m_app->metadata(), metadataId, schema, name, schemaQuoted, nameQuoted,
                                       sqlDialectFor(profile()->type), m_tabs, currentSchema);
     detail->setProperty("dbaroDetailKey", key);
+    detail->setProperty("dbaroDetailSource", metadataId); // 같은 이름이어도 DB가 다르면 다른 탭
     const int index = m_tabs->addTab(detail, Icons::get(QStringLiteral("table")), name);
     m_tabs->setTabToolTip(index, tr("Table details: %1").arg(key));
     m_tabs->setCurrentIndex(index);
@@ -1455,16 +1566,17 @@ void MainWindow::openTableDetails(const QString &schema, const QString &name, bo
         }
     });
     connect(detail, &TableDetailTab::selectRowsRequested, this,
-            [this](const QString &s, const QString &n) { openObject(m_connectionId, s, n); });
-    connect(detail, &TableDetailTab::importRequested, this, &MainWindow::importData);
+            [this, metadataId](const QString &s, const QString &n) { openObject(metadataId, s, n); });
+    connect(detail, &TableDetailTab::importRequested, this,
+            [this, metadataId](const QString &s, const QString &n) { importData(metadataId, s, n); });
 }
 
-void MainWindow::importData(const QString &schema, const QString &table)
+void MainWindow::importData(const QString &metadataId, const QString &schema, const QString &table)
 {
     const ConnectionProfile *p = profile();
-    if (!p)
+    if (!p || Db::baseProfileId(metadataId) != m_connectionId)
         return;
-    ImportDialog dialog(m_app->metadata(), m_connectionId, sqlDialectFor(p->type), schema, table, this);
+    ImportDialog dialog(m_app->metadata(), metadataId, sqlDialectFor(p->type), schema, table, this);
     if (dialog.exec() != QDialog::Accepted)
         return;
     const QStringList statements = dialog.statements();
@@ -1472,12 +1584,12 @@ void MainWindow::importData(const QString &schema, const QString &table)
         return;
     if (dialog.openAsSql()) {
         // 바로 실행하지 않고 새 탭에서 고쳐 실행할 수 있게
-        QueryTab *sqlTab = addQueryTab();
+        QueryTab *sqlTab = addQueryTabOn(Db::databaseOf(metadataId));
         sqlTab->editor()->setPlainText(statements.join(QStringLiteral(";\n")) + u';');
         sqlTab->editor()->moveCursor(QTextCursor::Start);
         return;
     }
-    QueryTab *tab = currentQueryTab() ? currentQueryTab() : addQueryTab();
+    QueryTab *tab = queryTabFor(metadataId); // 불러올 테이블이 있는 DB의 탭
     runImport(tab, statements, dialog.stopOnError(), dialog.targetDisplay());
 }
 
@@ -1520,7 +1632,7 @@ void MainWindow::runImport(QueryTab *tab, const QStringList &statements, bool st
             progress->deleteLater();
             if (!guard)
                 return;
-            m_app->metadata()->invalidate(m_connectionId); // 새 테이블·행이 자동완성·탐색기에 보이게
+            m_app->metadata()->invalidate(guard->metadataId()); // 새 테이블·행이 자동완성·탐색기에 보이게
             QString message = tr("Import into %1: %2 of %3 statement(s) ran").arg(target).arg(state->executed).arg(total);
             if (state->failed > 0)
                 message += tr(", %n failed", nullptr, int(state->failed));
@@ -1588,7 +1700,8 @@ void MainWindow::runImport(QueryTab *tab, const QStringList &statements, bool st
 void MainWindow::requestDdl(const QString &connectionId, const QString &schema, const QString &name, bool schemaQuoted,
                             bool nameQuoted, QueryTab *source)
 {
-    if (!m_app->profile(connectionId))
+    // connectionId는 메타데이터 id다 (PostgreSQL에서 다른 DB를 고른 탭이면 그 DB)
+    if (!m_app->profile(Db::baseProfileId(connectionId)))
         return;
     QCborMap params;
     if (!schema.isEmpty())
@@ -1632,7 +1745,7 @@ void MainWindow::showPlanObject(QueryTab *tab, const QCborMap &object)
         m_planObjectWindow = new PlanObjectWindow(this);
         connect(m_planObjectWindow, &PlanObjectWindow::tableDetailsRequested, this,
                 [this](const QString &schema, const QString &name) {
-                    openTableDetails(schema, name, true, true);
+                    openTableDetails(m_planObjectSource, schema, name, true, true);
                     activateWindow();
                 });
     }
@@ -1660,8 +1773,9 @@ void MainWindow::showPlanObject(QueryTab *tab, const QCborMap &object)
     window->raise();
 
     QPointer<PlanObjectWindow> guard(window);
+    m_planObjectSource = tab ? tab->metadataId() : activeMetadataId(); // 계획을 얻은 탭의 DB
     m_app->metadata()->request(
-        m_connectionId, QStringLiteral("planObject"), params,
+        m_planObjectSource, QStringLiteral("planObject"), params,
         [guard, ticket](const QCborMap &result, const QString &error) {
             if (!guard)
                 return;
@@ -1689,7 +1803,7 @@ void MainWindow::openDdlTab(const QString &connectionId, const QCborMap &result)
         }
     }
     if (!tab) {
-        tab = addQueryTab();
+        tab = addQueryTabOn(Db::databaseOf(connectionId)); // 그 객체가 있는 DB로
         tab->setProperty("dbaroDdlKey", key);
         tab->setProperty(kTitleSource, kFixedTitle);
     }
@@ -1738,8 +1852,9 @@ void MainWindow::withConnectedSession(QueryTab *tab, std::function<void()> work)
     if (!m_app->passwordFor(*profile, &password, true, this))
         return;
     const QString profileId = profile->id;
-    ConnectSpec spec = m_app->connectSpec(*profile, password, m_autoCommitAction->isChecked());
-    spec.schema = tab->preferredSchema(); // 이 탭에서 고른 스키마로 다시 바꾼다
+    // 이 탭에서 고른 DB(PostgreSQL)와 스키마로 접속한다
+    ConnectSpec spec = m_app->connectSpec(profileOn(tab->database()), password, m_autoCommitAction->isChecked());
+    spec.schema = tab->preferredSchema();
     QPointer<QuerySession> guard(session);
     session->connectTo(spec, profileId, [this, guard, work, profileId](bool ok) {
         if (!guard)
@@ -1770,15 +1885,16 @@ void MainWindow::connectCurrentTab()
         return;
     }
     const QString profileId = profile->id;
-    ConnectSpec spec = m_app->connectSpec(*profile, password, m_autoCommitAction->isChecked());
-    spec.schema = tab->preferredSchema(); // 이 탭에서 고른 스키마로 다시 바꾼다
+    // 이 탭에서 고른 DB(PostgreSQL)와 스키마로 접속한다
+    ConnectSpec spec = m_app->connectSpec(profileOn(tab->database()), password, m_autoCommitAction->isChecked());
+    spec.schema = tab->preferredSchema();
     session->connectTo(spec, profileId, [this, profileId](bool ok) {
         if (ok)
             return;
         m_app->forgetPassword(profileId);
         m_autoConnectBlocked = true; // 서버가 꺼져 있으면 탭을 고를 때마다 실패하지 않게
     });
-    m_explorer->expandConnection(profileId); // 같은 비밀번호로 스키마 목록도 바로 가져온다
+    m_explorer->expandConnection(m_explorerId); // 같은 비밀번호로 스키마 목록도 바로 가져온다 (탐색기는 이 탭의 DB)
 }
 
 bool MainWindow::confirmSafeToRun(QueryTab *tab, const QList<SqlStatement> &statements)
@@ -1850,7 +1966,11 @@ void MainWindow::updateConnectionStatus()
     else
         state = tr("not connected");
 
-    QString text = tr("%1: %2 (%3)").arg(Db::typeName(profile->type), profile->name, state);
+    // PostgreSQL에서 다른 DB를 고른 탭이면 그 DB도
+    const QString name = tab && !tab->database().isEmpty()
+                             ? QStringLiteral("%1 · %2").arg(profile->name, tab->database())
+                             : profile->name;
+    QString text = tr("%1: %2 (%3)").arg(Db::typeName(profile->type), name, state);
     if (profile->environment == Environment::Production)
         text += tr(" · PRODUCTION");
     if (profile->readOnly)

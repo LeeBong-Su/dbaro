@@ -83,7 +83,7 @@ class ActualPlanTest {
     @Test
     fun oracleStatisticsBecomeTree() {
         // V$SQL_PLAN_STATISTICS_ALL. Oracle JDBC는 NUMBER를 BigDecimal로 준다. LAST_ELAPSED_TIME은 마이크로초
-        fun n(value: Int) = BigDecimal(value)
+        fun n(value: Number) = BigDecimal(value.toLong())
         val rows = listOf(
             mapOf("ID" to n(0), "PARENT_ID" to null, "OPERATION" to "SELECT STATEMENT", "COST" to n(5),
                 "LAST_STARTS" to n(1), "LAST_OUTPUT_ROWS" to n(14000), "LAST_ELAPSED_TIME" to n(15250),
@@ -91,8 +91,8 @@ class ActualPlanTest {
             mapOf("ID" to n(1), "PARENT_ID" to n(0), "OPERATION" to "NESTED LOOPS", "CARDINALITY" to n(1), "COST" to n(5),
                 "LAST_STARTS" to n(1), "LAST_OUTPUT_ROWS" to n(14000), "LAST_ELAPSED_TIME" to n(15000),
                 "LAST_CR_BUFFER_GETS" to n(120), "LAST_CU_BUFFER_GETS" to n(0), "LAST_DISK_READS" to n(4),
-                // 작업 영역(KB): 메모리 안에서 끝남
-                "ESTIMATED_OPTIMAL_SIZE" to n(1452), "ESTIMATED_ONEPASS_SIZE" to n(1452), "LAST_MEMORY_USED" to n(1290),
+                // 작업 영역(바이트): 메모리 안에서 끝남
+                "ESTIMATED_OPTIMAL_SIZE" to n(1452L * 1024), "ESTIMATED_ONEPASS_SIZE" to n(1452L * 1024), "LAST_MEMORY_USED" to n(1290L * 1024),
                 "LAST_EXECUTION" to "OPTIMAL"),
             mapOf("ID" to n(2), "PARENT_ID" to n(1), "OPERATION" to "TABLE ACCESS", "OPTIONS" to "FULL", "OBJECT_OWNER" to "HR",
                 "OBJECT_NAME" to "EMPLOYEES", "OBJECT_TYPE" to "TABLE", "CARDINALITY" to n(107), "COST" to n(3),
@@ -105,7 +105,7 @@ class ActualPlanTest {
                 "LAST_CR_BUFFER_GETS" to n(114), "LAST_CU_BUFFER_GETS" to n(0), "LAST_DISK_READS" to n(0),
                 "ACCESS_PREDICATES" to "\"DEPT_ID\"=10",
                 // 디스크를 한 번 거침: 임시 세그먼트(바이트)
-                "LAST_MEMORY_USED" to n(2048), "LAST_EXECUTION" to "1 PASS", "LAST_TEMPSEG_SIZE" to n(20 * 1024 * 1024)),
+                "LAST_MEMORY_USED" to n(2048L * 1024), "LAST_EXECUTION" to "1 PASS", "LAST_TEMPSEG_SIZE" to n(20 * 1024 * 1024)),
         )
         val plan = ActualPlan.oraclePlan(rows, "SQL_ID  abc, child number 0")
         // ALLSTATS LAST의 컬럼 (쓴 적 없는 Writes, Pstart·Pstop은 빠진다)
@@ -122,8 +122,8 @@ class ActualPlanTest {
         )
         assertEquals(listOf("1452K", "1452K", "1290K (0)", ""), (nodes[1]["cells"] as List<*>).subList(8, 12))
         assertEquals(listOf("", "", "2048K (1)", "20M"), (nodes[3]["cells"] as List<*>).subList(8, 12))
-        assertEquals(listOf("1023", "2048K", "73M", "3072M", "20G"),
-            listOf(1023L, 2048L * 1024, 73L * 1024 * 1024, 3L * 1024 * 1024 * 1024, 20L * 1024 * 1024 * 1024).map(ActualPlan::size))
+        assertEquals(listOf("2048", "1161K", "73M", "3072M", "20G"),
+            listOf(2048L, 1188864L, 73L * 1024 * 1024, 3L * 1024 * 1024 * 1024, 20L * 1024 * 1024 * 1024).map(ActualPlan::size))
         assertEquals("15.250", (nodes[0]["cells"] as List<*>)[5])
         assertEquals(mapOf("estimated" to 1L, "actual" to 14000L), nodes[1]["rows"])
         // E-Rows는 한 번 시작할 때의 예상: Starts를 곱한다

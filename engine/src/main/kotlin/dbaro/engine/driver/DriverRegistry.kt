@@ -32,6 +32,7 @@ class DriverRegistry(
     companion object {
         const val MAVEN_CENTRAL = "https://repo1.maven.org/maven2"
 
+        // 버전을 바꾸면 packaging/windows/README.txt의 폐쇄망 jar 목록도 고친다.
         val BUILT_IN: Map<String, Spec> = mapOf(
             "oracle" to Spec("oracle.jdbc.OracleDriver", Artifact("com.oracle.database.jdbc", "ojdbc11", "23.4.0.24.05")),
             "tibero" to Spec("com.tmax.tibero.jdbc.TbDriver", null),

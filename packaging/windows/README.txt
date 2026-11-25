@@ -2,6 +2,9 @@ DBaro (디비바로) - 크로스플랫폼 DB 접속 툴
 
 실행
   dbaro.exe 를 실행한다. Java나 Qt를 따로 설치할 필요가 없다 (runtime\ 폴더에 Java 런타임이 들어 있다).
+  MSI로 설치했다면 바탕 화면이나 시작 메뉴의 DBaro 바로 가기로 실행한다.
+  서명되지 않은 배포본은 Windows 11 스마트 앱 제어가 켜져 있으면 실행이 막힌다
+  (Windows 보안 > 앱 및 브라우저 컨트롤 > 스마트 앱 제어 설정).
 
 명령줄
   dbaro-cli.exe 는 DBaro에 저장한 연결로 SQL을 실행한다 (dbaro-cli --help).
@@ -11,9 +14,29 @@ DBaro (디비바로) - 크로스플랫폼 DB 접속 툴
     @파일명                                    스크립트 폴더의 SQL 파일 실행 (\scripts 로 폴더 정하기)
 
 처음 연결할 때
-  Oracle, MariaDB, MySQL, PostgreSQL JDBC 드라이버는 처음 연결할 때 Maven Central에서 내려받는다.
-  인터넷이 막힌 환경이면 연결 설정의 Advanced 탭에서 드라이버 jar 파일을 직접 지정한다.
-  Tibero는 Tibero 클라이언트의 client\lib\jar\tibero7-jdbc.jar 를 지정해야 한다.
+  Oracle, MariaDB, MySQL, PostgreSQL JDBC 드라이버는 처음 연결할 때 Maven Central에서 내려받아
+  %APPDATA%\DBaro\DBaro\drivers\ 에 저장한다. 다음부터는 저장한 파일을 쓴다.
+  Tibero는 Tibero 클라이언트의 client\lib\jar\tibero7-jdbc.jar 를 연결 설정의 Advanced 탭에서 지정해야 한다.
+
+인터넷이 막힌 환경 (폐쇄망)
+  아래 jar를 %APPDATA%\DBaro\DBaro\drivers\ 에 파일 이름 그대로 복사해 두면 내려받지 않고 바로 쓴다.
+  연결 설정은 바꾸지 않아도 되고, dbaro-cli도 같은 폴더를 쓴다.
+  인터넷이 되는 PC에서 DBaro로 한 번 연결해 봤다면 그 PC의 같은 폴더에 이미 있다.
+
+    Oracle       ojdbc11-23.4.0.24.05.jar
+    PostgreSQL   postgresql-42.7.4.jar
+    MySQL        mysql-connector-j-8.4.0.jar
+    MariaDB      mariadb-java-client-3.4.1.jar
+
+  받는 곳 (Maven Central)
+    https://repo1.maven.org/maven2/com/oracle/database/jdbc/ojdbc11/23.4.0.24.05/ojdbc11-23.4.0.24.05.jar
+    https://repo1.maven.org/maven2/org/postgresql/postgresql/42.7.4/postgresql-42.7.4.jar
+    https://repo1.maven.org/maven2/com/mysql/mysql-connector-j/8.4.0/mysql-connector-j-8.4.0.jar
+    https://repo1.maven.org/maven2/org/mariadb/jdbc/mariadb-java-client/3.4.1/mariadb-java-client-3.4.1.jar
+
+  파일 이름이 한 글자라도 다르면 찾지 못하고 내려받으려다 실패한다.
+  다른 버전을 쓰려면 연결 설정의 Advanced 탭에서 jar 파일을 직접 지정한다.
+  Tibero jar는 Tibero 서버나 클라이언트의 client\lib\jar\ 에서 복사해 와서 같은 방법으로 지정한다.
 
 사용자 데이터 위치 (프로그램 폴더를 지워도 남는다)
   연결 정보   %APPDATA%\DBaro\DBaro\connections.json
