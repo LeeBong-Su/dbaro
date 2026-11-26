@@ -23,7 +23,7 @@ JDBC 드라이버는 배포본에 들어 있지 않다. 처음 연결할 때 Mav
 
 | 드라이버 | 라이선스 |
 |---|---|
-| Oracle JDBC (ojdbc11) | Oracle Free Use Terms and Conditions |
+| Oracle JDBC (ojdbc11), Oracle NLS (orai18n) | Oracle Free Use Terms and Conditions |
 | MariaDB Connector/J | LGPL-2.1 |
 | MySQL Connector/J | GPL-2.0 with Universal FOSS Exception |
 | PostgreSQL JDBC (pgJDBC) | BSD-2-Clause |

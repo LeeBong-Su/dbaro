@@ -7,6 +7,7 @@ DB 연결은 직접 하지 않고 엔진 프로세스(`../engine`)에 맡긴다.
 |---|---|
 | `src/cli/` | 명령줄 도구 `dbaro-cli` (`CliApp`, 콘솔 입출력 `CliConsole`). 창 안의 CLI 탭(`ui/ConsoleTab`)도 `CliApp`을 쓴다 |
 | `src/ui/` | 앱 전체와 창 관리(`AppController`), 연결 선택 창(`LauncherWindow`), 연결 창(`MainWindow`), SQL 에디터, 결과 그리드, 객체 탐색기, 연결 관리 화면, 단일 실행(`SingleInstance`), 작업 표시줄 연동(`WindowsIntegration`), 테마(`Theme`), 아이콘(`Icons`) |
+| `src/ai/` | AI 도우미의 Claude API 연결(`ClaudeClient`, SSE 스트리밍), 도구 루프(`AiAgent`), 설정과 API 키(`AiSettings`). 화면과 DB 도구는 `ui/AiPanel`·`ui/AiDbTools` |
 | `src/core/` | 연결 정보 저장(`ConnectionStore`), 비밀번호 보안 저장(`SecretStore`), 방언별 문장 분리(`SqlSplitter`), 식별자 따옴표 처리(`SqlIdentifiers`), 자동완성 문맥 분석(`SqlCompletion`), 열린 탭 저장(`WorkspaceStore`), SQL 파일 인코딩(`TextFile`), 실행 기록(`QueryHistory`), 바인드 변수(`SqlBinds`), 결과 내보내기(`ResultExport`), SQL 정렬(`SqlFormatter`), 터미널 글자 표(`TextTable`) |
 | `src/ipc/` | 엔진 프로세스 실행과 통신 (`EngineClient`) |
 | `resources/icons/` | 자체 아이콘 (SVG, `#ICON` 색은 테마에 맞춰 바뀜). 이후 번역(한국어·영어) |
@@ -52,6 +53,7 @@ DB 연결은 직접 하지 않고 엔진 프로세스(`../engine`)에 맡긴다.
 - 탐색기에서 여러 객체·컬럼을 Ctrl·Shift+클릭으로 골라 에디터로 끌어다 놓으면 이름이 들어간다. Ctrl+C로 복사.
 - 실행 계획(Ctrl+E, Alt+X) 트리에서 Object 칸의 링크(MySQL은 Operation 칸)를 두 번 클릭하면 그 단계가 읽는 테이블·인덱스 정보(인덱스와 통계, 컬럼)가 별도 창에 나온다. 오른쪽 클릭 Show Object Info도 같다.
 - 실제 실행 계획(Alt+X)은 예상과 실제 행 수가 10배 이상(100행 이상) 다른 단계를 주황색으로 칠한다. 옵티마이저가 잘못 짐작한 곳이라 통계를 확인해 볼 자리다. Oracle은 `DBMS_XPLAN.DISPLAY_CURSOR 'ADVANCED ALLSTATS LAST'` 글(Query Block Name, Outline Data, Peeked Binds, Predicate·Column Projection Information 포함)을 먼저 보이고(Tree로 바꿔 볼 수 있음), `V$SESSION`, `V$SQL_PLAN_STATISTICS_ALL`을 읽을 권한(예: SELECT_CATALOG_ROLE)이 있어야 한다.
+- 실행 계획의 Text 보기는 Alt+드래그로 사각형(세로) 범위를 고른다. 표의 한 컬럼(Operation, Rows 등)만 골라 Ctrl+C(오른쪽 클릭 Copy)로 복사한다. 그냥 누르거나 Esc를 누르면 풀린다.
 - Log·Output 탭은 오른쪽 클릭 → Clear로 비운다.
 - 실행·계획·F4 DDL·테이블 상세가 0.4초 넘게 걸리면 기다리는 중임을 보인다: 결과 영역에 하는 일·문장·흐르는 시간·Cancel 카드, 탭 아이콘의 돌아가는 원호, F4는 에디터 오른쪽 위 알림.
 
@@ -75,6 +77,16 @@ dbaro-cli dev --gui                                # 그 연결의 GUI 창 열�
 
 `--format table|csv|tsv|json`, `--max-rows <n>`(표는 기본 1000, 나머지는 모두), `--max-width <n>`(표 칸 너비, 기본 60, 0이면 자르지 않음), `--schema <name>`, `--continue-on-error`(`-e`의 여러 문장), `--stop-on-error`(스크립트 파일), `--no-autocommit`, `--no-history`, `-q`. 비밀번호는 저장한 것 → 환경 변수 `DBARO_PASSWORD` → 입력. 끝 코드는 0 성공, 1 실패한 문장이 있음, 2 사용법·연결 오류.
 
+**Claude Code·Claude Desktop에서 쓰기 (MCP 서버):** `dbaro-cli mcp`는 DBaro의 DB 도구를 MCP 서버(표준 입출력)로 낸다. 사용자의 Claude Code·Claude Desktop이 자기 Claude 로그인(구독)으로 부르고, DBaro는 Claude를 부르지 않는다(API 키 필요 없음). 등록 명령과 Claude Desktop 설정은 Database → Use with Claude Code...에서 복사하거나 바로 등록할 수 있다.
+
+```powershell
+claude mcp add --transport stdio --scope user dbaro -- "<DBaro 폴더>\dbaro-cli.exe" mcp
+```
+
+도구: `list_connections`, `list_schemas`, `list_tables`, `describe_table`, `get_ddl`, `run_query`(문장 하나, 읽기 전용 세션, 행 수 제한), `explain_query`(예상 계획), `open_in_dbaro`(SQL을 실행하지 않고 DBaro의 새 쿼리 탭에 연다: `dbaro.exe --connection <id> --open-sql <임시 파일> --title <제목>`). GUI의 AI 도우미와 같은 코드라 읽기 전용 검사가 같다. 비밀번호를 저장한 연결만 쓸 수 있다(물을 수 없다. `DBARO_PASSWORD`가 있으면 그것). 운영 연결은 `run_query`를 막는다(구조·계획은 된다). 옵션: `-c <연결>`(여러 번, 그 연결만), `--allow-production`, `--max-rows <n>`(기본 100, 최대 1000), `--no-rows`(값 없이 컬럼 이름·행 수만), `--connections-file <path>`.
+
+**Open Claude Code (Ctrl+Alt+C):** Database 메뉴나 AI 도우미 창의 Claude Code 버튼. 사용자의 `claude`를 새 터미널(Windows 11은 기본 터미널, 보통 Windows Terminal)에서 연다. 지금 연결·스키마·DB 버전을 `--append-system-prompt`로 알려 연결 이름을 말하지 않아도 그 연결의 dbaro 도구를 쓴다. dbaro MCP 서버가 등록돼 있지 않으면 그 세션에만 `--mcp-config`로 붙인다. 작업 폴더는 그 DBMS의 스크립트 폴더(없으면 `%USERPROFILE%\DBaro`, OneDrive와 동기화되는 문서 폴더는 쓰지 않는다). DBaro는 띄우기만 하고 입출력을 읽지 않는다. Claude Code 세션에서 DBaro를 띄웠어도 그 세션의 환경 변수(`CLAUDE_CODE_*` 등, 사용자가 직접 정한 것은 빼고)는 넘기지 않는다.
+
 ## 빌드
 
 Qt 6.8 이상과 CMake 3.21 이상이 필요하다. 저장소 루트에서:
@@ -92,6 +104,13 @@ cmake --build build/app --config Release
 ```
 
 실행하려면 Qt DLL이 필요하다. `C:\Qt\6.10.3\msvc2022_64\bin`을 PATH에 넣거나, 배포용으로는 `windeployqt`로 DLL을 exe 옆에 복사한다.
+
+단위 테스트(`tests/`, Qt Test)는 `dbaro_tests`(SQL 이름 바꾸기)와 `dbaro_ai_tests`(AI 도우미: 이 PC 안의 가짜 Claude API 서버로 스트리밍·도구 루프·대화 규칙, 읽기 전용 검사. 실제 API는 부르지 않는다)로 빌드된다. Qt Test 모듈이 없으면 건너뛴다 (`-DDBARO_BUILD_TESTS=OFF`로 끌 수 있다).
+
+```powershell
+cmake --build build/app --config Release --target dbaro_tests dbaro_ai_tests
+ctest --test-dir build/app -C Release --output-on-failure   # Qt DLL이 PATH에 있어야 한다
+```
 
 쿼리를 실행하려면 엔진이 설치돼 있어야 한다. `engine` 폴더에서 `./gradlew installDist`를 한 번 실행하면 앱이 자동으로 찾는다.
 Java는 `JAVA_HOME`(JDK 21)을 쓴다. 다른 위치면 `DBARO_JAVA`, `DBARO_ENGINE_HOME`으로 지정한다.

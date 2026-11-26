@@ -619,6 +619,10 @@ void ObjectExplorer::showContextMenu(const QPoint &position)
             menu.addAction(tr("Set as Current Schema of the Tab"), this,
                            [this, connectionId, schema] { emit useSchemaRequested(connectionId, schema); });
         }
+        menu.addAction(tr("Reverse Engineer (ERD, DDL)..."), this, [this, connectionId, item] {
+            emit reverseEngineerRequested(connectionId, item->data(SchemaRole).toString());
+        });
+        menu.addSeparator();
         menu.addAction(tr("New Query Tab"), this, [this, connectionId] { emit newQueryRequested(connectionId); });
         menu.addAction(tr("Refresh"), this, [this, item] { reload(item); });
         break;
@@ -639,6 +643,11 @@ void ObjectExplorer::showContextMenu(const QPoint &position)
         }
         menu.addAction(tr("Show DDL"), this,
                        [this, connectionId, schema, name] { emit ddlRequested(connectionId, schema, name); });
+        const QString objectType = item->data(TypeRole).toString();
+        if (objectType.contains(u"TABLE") && !objectType.contains(u"SYSTEM")) {
+            menu.addAction(tr("Rename Table..."), this,
+                           [this, connectionId, schema, name] { emit renameRequested(connectionId, schema, name, QString()); });
+        }
         const QString qualified = qualifiedName(item);
         menu.addAction(tr("Copy Name"), this, [qualified] { QGuiApplication::clipboard()->setText(qualified); });
         menu.addAction(tr("Insert Name into Editor"), this, [this, qualified] { emit insertTextRequested(qualified); });
@@ -650,6 +659,16 @@ void ObjectExplorer::showContextMenu(const QPoint &position)
         const QString name = nameOf(item);
         menu.addAction(tr("Copy Name"), this, [name] { QGuiApplication::clipboard()->setText(name); });
         menu.addAction(tr("Insert Name into Editor"), this, [this, name] { emit insertTextRequested(name); });
+        // 테이블의 컬럼이면 이름 바꾸기 (뷰의 컬럼은 뷰를 고쳐야 한다)
+        if (QStandardItem *owner = item->parent(); owner && kindOf(owner) == ObjectKind
+            && owner->data(TypeRole).toString().contains(u"TABLE")) {
+            const QString schema = owner->data(SchemaRole).toString();
+            const QString table = owner->data(NameRole).toString();
+            const QString column = item->data(NameRole).toString();
+            menu.addSeparator();
+            menu.addAction(tr("Rename Column..."), this,
+                           [this, connectionId, schema, table, column] { emit renameRequested(connectionId, schema, table, column); });
+        }
         break;
     }
     default:

@@ -1,5 +1,6 @@
 #include "PlanView.h"
 
+#include "BlockSelectTextView.h"
 #include "ScrollHelpers.h"
 #include "Theme.h"
 
@@ -98,7 +99,7 @@ PlanView::PlanView(QWidget *parent)
         menu.exec(m_tree->viewport()->mapToGlobal(pos));
     });
 
-    m_text = new QPlainTextEdit(this);
+    m_text = new BlockSelectTextView(this); // Alt+드래그로 컬럼(세로) 범위를 골라 복사
     m_text->setObjectName(QStringLiteral("planText"));
     m_text->setFrameShape(QFrame::NoFrame);
     m_text->setReadOnly(true);

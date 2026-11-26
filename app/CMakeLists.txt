@@ -19,6 +19,8 @@ qt_add_library(dbaro_lib STATIC
     src/cli/CliApp.h
     src/cli/CliConsole.cpp
     src/cli/CliConsole.h
+    src/cli/McpServer.cpp
+    src/cli/McpServer.h
     src/core/ConnectSpec.cpp
     src/core/ConnectSpec.h
     src/core/ConnectionProfile.cpp
@@ -46,6 +48,8 @@ qt_add_library(dbaro_lib STATIC
     src/core/SqlFormatter.h
     src/core/SqlIdentifiers.cpp
     src/core/SqlIdentifiers.h
+    src/core/SqlRename.cpp
+    src/core/SqlRename.h
     src/core/SqlSafety.cpp
     src/core/SqlSafety.h
     src/core/SqlSplitter.cpp
@@ -58,9 +62,27 @@ qt_add_library(dbaro_lib STATIC
     src/core/WorkspaceStore.h
     src/ipc/EngineClient.cpp
     src/ipc/EngineClient.h
+    src/ai/AiAgent.cpp
+    src/ai/AiAgent.h
+    src/ai/AiSettings.cpp
+    src/ai/AiSettings.h
+    src/ai/ClaudeClient.cpp
+    src/ai/ClaudeClient.h
+    src/ui/AiDbTools.cpp
+    src/ui/AiDbTools.h
+    src/ui/AiPanel.cpp
+    src/ui/AiPanel.h
+    src/ui/AiSettingsDialog.cpp
+    src/ui/AiSettingsDialog.h
     src/ui/AppController.cpp
     src/ui/AppController.h
     src/ui/BindDialog.cpp
+    src/ui/BlockSelectTextView.cpp
+    src/ui/BlockSelectTextView.h
+    src/ui/ClaudeCodeDialog.cpp
+    src/ui/ClaudeCodeDialog.h
+    src/ui/ClaudeCodeLauncher.cpp
+    src/ui/ClaudeCodeLauncher.h
     src/ui/BindDialog.h
     src/ui/BusyIndicator.cpp
     src/ui/BusyIndicator.h
@@ -90,6 +112,16 @@ qt_add_library(dbaro_lib STATIC
     src/ui/MainWindow.h
     src/ui/MetadataService.cpp
     src/ui/MetadataService.h
+    src/ui/MonitorTab.cpp
+    src/ui/MonitorTab.h
+    src/ui/ErdView.cpp
+    src/ui/ErdView.h
+    src/ui/RenameDialog.cpp
+    src/ui/RenameDialog.h
+    src/ui/ReverseDialog.cpp
+    src/ui/ReverseDialog.h
+    src/ui/ReverseTab.cpp
+    src/ui/ReverseTab.h
     src/ui/ObjectExplorer.cpp
     src/ui/ObjectExplorer.h
     src/ui/PlanView.cpp
@@ -131,6 +163,7 @@ qt_add_resources(dbaro_lib "icons"
     BASE "resources"
     FILES
         resources/icons/add.svg
+        resources/icons/ai.svg
         resources/icons/close.svg
         resources/icons/column.svg
         resources/icons/commit.svg
@@ -144,6 +177,7 @@ qt_add_resources(dbaro_lib "icons"
         resources/icons/folder.svg
         resources/icons/hide.svg
         resources/icons/key.svg
+        resources/icons/monitor.svg
         resources/icons/object.svg
         resources/icons/rollback.svg
         resources/icons/routine.svg
@@ -217,3 +251,26 @@ set_target_properties(dbaro-cli PROPERTIES
     WIN32_EXECUTABLE OFF
     MACOSX_BUNDLE OFF
 )
+
+# 앱 단위 테스트 (ctest). 배포 스크립트는 실행 파일만 빌드하므로 배포본에는 들어가지 않는다.
+option(DBARO_BUILD_TESTS "Build the app unit tests" ON)
+if(DBARO_BUILD_TESTS)
+    find_package(Qt6 6.8 COMPONENTS Test)
+    if(Qt6Test_FOUND)
+        enable_testing()
+        qt_add_executable(dbaro_tests
+            tests/SqlRenameTest.cpp
+        )
+        target_link_libraries(dbaro_tests PRIVATE dbaro_lib Qt6::Test)
+        set_target_properties(dbaro_tests PROPERTIES WIN32_EXECUTABLE OFF MACOSX_BUNDLE OFF)
+        add_test(NAME dbaro_tests COMMAND dbaro_tests)
+
+        # AI 도우미: 가짜 Claude API 서버로 스트리밍·도구 루프 확인 (네트워크 밖으로 나가지 않는다)
+        qt_add_executable(dbaro_ai_tests
+            tests/AiAgentTest.cpp
+        )
+        target_link_libraries(dbaro_ai_tests PRIVATE dbaro_lib Qt6::Test Qt6::Network)
+        set_target_properties(dbaro_ai_tests PROPERTIES WIN32_EXECUTABLE OFF MACOSX_BUNDLE OFF)
+        add_test(NAME dbaro_ai_tests COMMAND dbaro_ai_tests)
+    endif()
+endif()

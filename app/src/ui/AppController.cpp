@@ -10,6 +10,9 @@
 #include "ipc/EngineClient.h"
 
 #include <QApplication>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
 #include <QInputDialog>
 #include <QLineEdit>
 #include <QMessageBox>
@@ -73,12 +76,24 @@ void AppController::start(const QStringList &arguments)
 void AppController::handleArguments(const QStringList &arguments)
 {
     bool handled = false;
+    // --open-sql <파일> [--title <제목>]: --connection으로 연 창의 새 쿼리 탭에 SQL을 넣는다 (dbaro-cli mcp의 open_in_dbaro)
+    QString sqlFile, sqlTitle;
+    for (int i = 0; i + 1 < arguments.size(); ++i) {
+        if (arguments[i] == u"--open-sql")
+            sqlFile = arguments[i + 1];
+        else if (arguments[i] == u"--title")
+            sqlTitle = arguments[i + 1];
+    }
     for (int i = 0; i < arguments.size(); ++i) {
         const QString &argument = arguments[i];
-        if (argument == u"--connection" && i + 1 < arguments.size()) {
+        if ((argument == u"--open-sql" || argument == u"--title") && i + 1 < arguments.size()) {
+            ++i;
+        } else if (argument == u"--connection" && i + 1 < arguments.size()) {
             const QString id = arguments[++i];
             if (profile(id)) {
-                openConnection(id);
+                MainWindow *window = openConnection(id);
+                if (window && !sqlFile.isEmpty())
+                    openSqlFile(window, sqlFile, sqlTitle);
             } else {
                 showLauncher();
                 QMessageBox::information(m_launcher, tr("DBaro"), tr("That connection no longer exists."));
@@ -100,6 +115,23 @@ void AppController::handleArguments(const QStringList &arguments)
         else
             showLauncher();
     }
+}
+
+void AppController::openSqlFile(MainWindow *window, const QString &path, const QString &title)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        QMessageBox::warning(window, tr("DBaro"), tr("Could not open %1: %2").arg(QDir::toNativeSeparators(path), file.errorString()));
+        return;
+    }
+    const QString sql = QString::fromUtf8(file.readAll());
+    file.close();
+    // dbaro-cli mcp가 넘긴 임시 파일만 지운다
+    const QFileInfo info(path);
+    if (info.fileName().startsWith(QLatin1String("dbaro-sql-")) && info.suffix() == u"sql"
+        && QDir(info.absolutePath()) == QDir(QDir::tempPath()))
+        QFile::remove(path);
+    window->openSqlTab(sql.trimmed() + u'\n', title.isEmpty() ? tr("Claude") : title);
 }
 
 void AppController::show(QWidget *window)

@@ -14,6 +14,15 @@
 #include "FindBar.h"
 #include "HistoryDialog.h"
 #include "ImportDialog.h"
+#include "MonitorTab.h"
+#include "AiPanel.h"
+#include "AiSettingsDialog.h"
+#include "ClaudeCodeDialog.h"
+#include "ClaudeCodeLauncher.h"
+#include "RenameDialog.h"
+#include "ReverseDialog.h"
+#include "core/ScriptFolders.h"
+#include "ReverseTab.h"
 #include "TableDetailTab.h"
 #include "Icons.h"
 #include "ObjectExplorer.h"
@@ -297,6 +306,20 @@ void MainWindow::createActions()
                                  3000);
     });
 
+    // 모니터링: 세션·락, 용량 (한 탭의 페이지)
+    m_sessionMonitorAction = new QAction(Icons::get(QStringLiteral("monitor")), tr("Session Monitor"), this);
+    m_sessionMonitorAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_M));
+    m_sessionMonitorAction->setToolTip(withShortcut(tr("Sessions and lock waits of this database"), m_sessionMonitorAction->shortcut()));
+    connect(m_sessionMonitorAction, &QAction::triggered, this, [this] { openMonitor(int(MonitorTab::Page::Sessions)); });
+    m_lockMonitorAction = new QAction(tr("Lock Waits"), this);
+    connect(m_lockMonitorAction, &QAction::triggered, this, [this] { openMonitor(int(MonitorTab::Page::Locks)); });
+    m_reverseAction = new QAction(tr("Reverse Engineer (ERD, DDL)..."), this);
+    m_reverseAction->setToolTip(tr("Draw the ERD of a schema, list its table definitions and make its DDL script"));
+    connect(m_reverseAction, &QAction::triggered, this, [this] { openReverseEngineering(activeMetadataId(), {}); });
+    m_spaceUsageAction = new QAction(tr("Space Usage"), this);
+    m_spaceUsageAction->setToolTip(tr("Tablespaces, database sizes and the largest tables"));
+    connect(m_spaceUsageAction, &QAction::triggered, this, [this] { openMonitor(int(MonitorTab::Page::Space)); });
+
     m_scriptFoldersAction = new QAction(tr("Script Folders..."), this);
     m_scriptFoldersAction->setToolTip(tr("Folders the CLI's @name looks in, one per DBMS"));
     connect(m_scriptFoldersAction, &QAction::triggered, this, [this] {
@@ -500,6 +523,9 @@ void MainWindow::createDocks()
             });
     connect(m_explorer, &ObjectExplorer::importRequested, this,
             [this](const QString &id, const QString &schema, const QString &name) { importData(id, schema, name); });
+    connect(m_explorer, &ObjectExplorer::reverseEngineerRequested, this,
+            [this](const QString &id, const QString &schema) { openReverseEngineering(id, schema); });
+    connect(m_explorer, &ObjectExplorer::renameRequested, this, &MainWindow::openRename);
     connect(m_explorer, &ObjectExplorer::insertTextRequested, this, [this](const QString &text) {
         if (QueryTab *tab = currentQueryTab()) {
             tab->editor()->insertPlainText(text);
@@ -522,6 +548,83 @@ void MainWindow::createDocks()
     toggle->setIcon(Icons::get(QStringLiteral("database")));
     toggle->setShortcut(QKeySequence(Qt::ALT | Qt::Key_1));
     toggle->setToolTip(withShortcut(tr("Database Explorer"), toggle->shortcut()));
+
+    // AI 도우미 (오른쪽, 처음에는 닫혀 있다). 지금 보고 있는 DB·탭의 스키마를 쓴다
+    AiDbTools::Context ai;
+    ai.metadata = m_app->metadata();
+    ai.engine = m_app->engine();
+    ai.metadataId = [this] { return activeMetadataId(); };
+    ai.currentSchema = [this] {
+        QueryTab *tab = currentQueryTab();
+        return tab ? tab->currentSchema() : QString();
+    };
+    ai.connectSpec = [this](ConnectSpec *spec) {
+        const ConnectionProfile *p = profile();
+        QString password;
+        if (!p || !m_app->passwordFor(*p, &password, true, this))
+            return false;
+        *spec = m_app->connectSpec(profileOn(m_activeDatabase), password, true);
+        return true;
+    };
+    ai.profile = [this] {
+        const ConnectionProfile *p = profile();
+        return p ? *p : ConnectionProfile();
+    };
+    ai.dialogParent = this;
+    AiPanel::Hooks hooks;
+    hooks.editorSql = [this] {
+        QueryTab *tab = currentQueryTab();
+        if (!tab)
+            return QString();
+        QString selected = tab->editor()->textCursor().selectedText();
+        selected.replace(QChar::ParagraphSeparator, u'\n');
+        return selected.trimmed().isEmpty() ? tab->editor()->toPlainText() : selected;
+    };
+    hooks.lastError = [this] {
+        QueryTab *tab = currentQueryTab();
+        return tab ? tab->lastError() : QString();
+    };
+    hooks.serverInfo = [this] {
+        QueryTab *tab = currentQueryTab();
+        return tab && tab->session()->isConnected() ? tab->session()->serverInfo() : QString();
+    };
+    hooks.openSql = [this](const QString &sql, const QString &title) { openSqlTab(sql, title); };
+    m_aiPanel = new AiPanel(ai, hooks, this);
+    connect(m_aiPanel, &AiPanel::settingsRequested, this, [this] {
+        AiSettingsDialog dialog(this);
+        if (dialog.exec() == QDialog::Accepted)
+            m_aiPanel->refreshBanner();
+    });
+    m_aiDock = new QDockWidget(tr("AI Assistant"), this);
+    m_aiDock->setObjectName(QStringLiteral("aiDock"));
+    m_aiDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+    m_aiDock->setFeatures(QDockWidget::DockWidgetClosable | QDockWidget::DockWidgetMovable);
+    m_aiDock->setWidget(m_aiPanel);
+    m_aiDock->setTitleBarWidget(createDockTitleBar(m_aiDock));
+    addDockWidget(Qt::RightDockWidgetArea, m_aiDock);
+    resizeDocks({m_aiDock}, {420}, Qt::Horizontal);
+    m_aiDock->hide();
+    m_aiAction = m_aiDock->toggleViewAction();
+    m_aiAction->setText(tr("AI Assistant"));
+    m_aiAction->setIcon(Icons::get(QStringLiteral("ai")));
+    m_aiAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_I));
+    m_aiAction->setToolTip(withShortcut(tr("AI assistant: ask about this database, write and tune SQL"), m_aiAction->shortcut()));
+    m_openClaudeAction = new QAction(tr("Open Claude Code"), this);
+    m_openClaudeAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_C));
+    m_openClaudeAction->setToolTip(withShortcut(tr("Open Claude Code in a terminal for this connection, with your Claude login"),
+                                                m_openClaudeAction->shortcut()));
+    connect(m_openClaudeAction, &QAction::triggered, this, &MainWindow::openClaudeCode);
+    connect(m_aiPanel, &AiPanel::claudeCodeRequested, this, &MainWindow::openClaudeCode);
+    m_claudeCodeAction = new QAction(tr("Use with Claude Code..."), this);
+    m_claudeCodeAction->setToolTip(tr("Let Claude Code or Claude Desktop use this database with your Claude login (MCP)"));
+    connect(m_claudeCodeAction, &QAction::triggered, this, [this] {
+        ClaudeCodeDialog dialog(this);
+        dialog.exec();
+    });
+    connect(m_aiDock, &QDockWidget::visibilityChanged, this, [this](bool visible) {
+        if (visible)
+            m_aiPanel->refreshBanner();
+    });
 }
 
 void MainWindow::createMenus()
@@ -551,6 +654,15 @@ void MainWindow::createMenus()
     databaseMenu->addAction(m_manageConnectionsAction);
     databaseMenu->addAction(m_newConnectionAction);
     databaseMenu->addAction(m_editConnectionAction);
+    databaseMenu->addSeparator();
+    databaseMenu->addAction(m_sessionMonitorAction);
+    databaseMenu->addAction(m_lockMonitorAction);
+    databaseMenu->addAction(m_spaceUsageAction);
+    databaseMenu->addSeparator();
+    databaseMenu->addAction(m_reverseAction);
+    databaseMenu->addAction(m_aiAction);
+    databaseMenu->addAction(m_openClaudeAction);
+    databaseMenu->addAction(m_claudeCodeAction);
     databaseMenu->addSeparator();
     databaseMenu->addAction(m_scriptFoldersAction);
 
@@ -625,6 +737,34 @@ void MainWindow::createToolBar()
     toolBar->addAction(m_rollbackAction);
 }
 
+void MainWindow::openClaudeCode()
+{
+    const ConnectionProfile *p = profile();
+    if (!p)
+        return;
+    ClaudeCodeLauncher::Context context;
+    context.profile = *p;
+    context.database = m_activeDatabase;
+    if (QueryTab *tab = currentQueryTab()) {
+        context.schema = tab->currentSchema().isEmpty() ? tab->preferredSchema() : tab->currentSchema();
+        if (tab->session()->isConnected())
+            context.serverInfo = tab->session()->serverInfo();
+    }
+    QString note;
+    if (ClaudeCodeLauncher::launch(this, context, &note))
+        statusBar()->showMessage(note.isEmpty() ? tr("Claude Code opened for %1.").arg(p->name) : note, 8000);
+}
+
+void MainWindow::openSqlTab(const QString &sql, const QString &title)
+{
+    QueryTab *tab = addQueryTab();
+    tab->setProperty(kTitleSource, kFixedTitle);
+    m_tabs->setTabText(m_tabs->indexOf(tab), title);
+    tab->editor()->setPlainText(sql);
+    tab->editor()->moveCursor(QTextCursor::Start);
+    tab->editor()->setFocus();
+}
+
 void MainWindow::createToolWindowStripe()
 {
     // 창 왼쪽 끝의 세로 아이콘 막대. 누르면 해당 도구 창이 열리고 닫힌다.
@@ -636,6 +776,7 @@ void MainWindow::createToolWindowStripe()
     stripe->setToolButtonStyle(Qt::ToolButtonIconOnly);
     stripe->toggleViewAction()->setVisible(false);
     stripe->addAction(m_explorerDock->toggleViewAction());
+    stripe->addAction(m_aiAction);
     addToolBar(Qt::LeftToolBarArea, stripe);
 }
 
@@ -954,6 +1095,134 @@ QList<QueryTab *> MainWindow::queryTabs() const
             tabs.append(tab);
     }
     return tabs;
+}
+
+void MainWindow::openRename(const QString &metadataId, const QString &schema, const QString &table, const QString &column)
+{
+    const ConnectionProfile *profile = this->profile();
+    if (!profile || Db::baseProfileId(metadataId) != m_connectionId)
+        return;
+    // 열린 쿼리 탭의 글도 함께 고친다 (파일 탭은 폴더 검색에서 빼고 탭으로)
+    QList<RenameDialog::OpenText> openTabs;
+    for (QueryTab *tab : queryTabs()) {
+        RenameDialog::OpenText text;
+        text.key = QString::number(quintptr(tab));
+        text.title = m_tabs->tabText(m_tabs->indexOf(tab));
+        text.text = tab->editor()->toPlainText();
+        text.filePath = tab->filePath();
+        openTabs << text;
+    }
+    QStringList folders;
+    if (const QString folder = ScriptFolders::folder(profile->type); !folder.isEmpty())
+        folders << folder;
+
+    RenameDialog dialog(m_app->metadata(), metadataId, sqlDialectFor(profile->type), schema, table, column, openTabs, folders, this);
+    if (dialog.exec() != QDialog::Accepted)
+        return;
+
+    // 탭: 한 번의 편집으로 (Ctrl+Z 한 번에 되돌린다)
+    const QHash<QString, QList<RenameMatch>> edits = dialog.tabEdits();
+    int changedTabs = 0;
+    for (QueryTab *tab : queryTabs()) {
+        auto it = edits.constFind(QString::number(quintptr(tab)));
+        if (it == edits.cend())
+            continue;
+        QList<RenameMatch> matches = it.value();
+        std::sort(matches.begin(), matches.end(), [](const RenameMatch &a, const RenameMatch &b) { return a.start > b.start; });
+        QTextCursor cursor(tab->editor()->document());
+        cursor.beginEditBlock();
+        for (const RenameMatch &m : std::as_const(matches)) {
+            cursor.setPosition(m.start);
+            cursor.setPosition(m.start + m.length, QTextCursor::KeepAnchor);
+            cursor.insertText(m.replacement);
+        }
+        cursor.endEditBlock();
+        ++changedTabs;
+    }
+
+    const QString oldName = column.isEmpty() ? table : column;
+    const QString newName = dialog.target().newName;
+    if (!dialog.script().isEmpty()) {
+        // DB는 스크립트를 열기만 한다: 실행하면 바뀐다 (읽기 전용·운영 확인은 실행할 때 그대로)
+        QueryTab *scriptTab = addQueryTab();
+        scriptTab->setProperty(kTitleSource, kFixedTitle);
+        m_tabs->setTabText(m_tabs->indexOf(scriptTab), tr("Rename %1").arg(oldName));
+        scriptTab->editor()->setPlainText(dialog.script());
+        scriptTab->editor()->moveCursor(QTextCursor::Start);
+    }
+    QString message = tr("Rename %1 → %2: %n file(s) written", nullptr, int(dialog.writtenFiles().size())).arg(oldName, newName);
+    message += tr(", %n tab(s) changed", nullptr, changedTabs);
+    if (!dialog.script().isEmpty())
+        message += tr(". Run the script to rename it in the database.");
+    statusBar()->showMessage(message, 15000);
+}
+
+ReverseTab *MainWindow::openReverseEngineering(const QString &metadataId, const QString &schema)
+{
+    const ConnectionProfile *profile = this->profile();
+    if (!profile || Db::baseProfileId(metadataId) != m_connectionId)
+        return nullptr;
+    // 스키마를 정하지 않았으면 지금 쿼리 탭의 스키마에서 시작한다
+    QString start = schema;
+    if (start.isEmpty()) {
+        if (QueryTab *tab = currentQueryTab())
+            start = tab->currentSchema();
+    }
+    ReverseDialog dialog(m_app->metadata(), metadataId, start, this);
+    if (dialog.exec() != QDialog::Accepted || dialog.schema().isEmpty())
+        return nullptr;
+
+    QString password;
+    if (!m_app->passwordFor(*profile, &password, true, this))
+        return nullptr;
+    const ConnectionProfile target = profileOn(Db::databaseOf(metadataId));
+    const ConnectSpec spec = m_app->connectSpec(target, password, true);
+    auto *tab = new ReverseTab(m_app->engine(), target, dialog.schema(), dialog.tables(), dialog.includeViews(), m_tabs);
+    connect(tab, &ReverseTab::openSqlRequested, this, [this](const QString &sql, const QString &title) {
+        QueryTab *query = addQueryTab();
+        query->setProperty(kTitleSource, kFixedTitle);
+        m_tabs->setTabText(m_tabs->indexOf(query), title);
+        query->editor()->setPlainText(sql);
+        query->editor()->moveCursor(QTextCursor::Start);
+    });
+    const int index = m_tabs->addTab(tab, Icons::get(QStringLiteral("schema")), tr("ERD: %1").arg(dialog.schema()));
+    m_tabs->setTabToolTip(index, tr("Reverse engineering of %1 (%2)").arg(dialog.schema(), profile->name));
+    m_tabs->setCurrentIndex(index);
+    tab->start(spec);
+    return tab;
+}
+
+MonitorTab *MainWindow::openMonitor(int page)
+{
+    const ConnectionProfile *profile = this->profile();
+    if (!profile)
+        return nullptr;
+    for (int i = 0; i < m_tabs->count(); ++i) {
+        if (auto *existing = qobject_cast<MonitorTab *>(m_tabs->widget(i))) {
+            m_tabs->setCurrentIndex(i);
+            existing->showPage(MonitorTab::Page(page));
+            return existing;
+        }
+    }
+    QString password;
+    if (!m_app->passwordFor(*profile, &password, true, this))
+        return nullptr;
+    // 지금 보고 있는 DB로 (PostgreSQL은 큰 테이블이 그 DB 것). 자동 커밋 세션이라 쿼리 탭의 트랜잭션과 따로다.
+    const ConnectionProfile target = profileOn(m_activeDatabase);
+    const ConnectSpec spec = m_app->connectSpec(target, password, true);
+
+    auto *monitor = new MonitorTab(m_app->engine(), target, m_tabs);
+    connect(monitor, &MonitorTab::openSqlRequested, this, [this](const QString &sql) {
+        QueryTab *tab = addQueryTab();
+        tab->editor()->setPlainText(sql.trimmed().endsWith(u';') ? sql.trimmed() : sql.trimmed() + u';');
+        tab->editor()->moveCursor(QTextCursor::Start);
+    });
+    const int index = m_tabs->addTab(monitor, Icons::get(QStringLiteral("monitor")), tr("Monitor"));
+    m_tabs->setTabToolTip(index, tr("Sessions, lock waits and space usage of %1").arg(profile->name));
+    m_tabs->setCurrentIndex(index);
+    monitor->showPage(MonitorTab::Page(page));
+    monitor->start(spec);
+    return monitor;
 }
 
 ConsoleTab *MainWindow::openConsole()

@@ -187,6 +187,22 @@ void QuerySession::whenConnected(std::function<void(bool)> callback)
         callback(isConnected());
 }
 
+void QuerySession::call(const QString &method, QCborMap params,
+                        std::function<void(const QCborMap &, const EngineError &)> done)
+{
+    if (!isConnected() || !m_engine) {
+        if (done)
+            done({}, EngineError::of(tr("Not connected.")));
+        return;
+    }
+    params.insert(QStringLiteral("sessionId"), m_sessionId);
+    QPointer<QuerySession> self(this);
+    m_engine->request(method, params, [self, done](const QCborMap &result, const EngineError &error) {
+        if (self && done)
+            done(result, error);
+    });
+}
+
 void QuerySession::disconnectFromServer()
 {
     if (!isConnected())
@@ -335,6 +351,12 @@ void QuerySession::fetchMore(int count)
                           self->m_info.fetchMs += result.value(QStringLiteral("elapsedMs")).toInteger();
                           emit self->executionInfoChanged(self->m_info);
                       });
+}
+
+void QuerySession::interrupt()
+{
+    if (isConnected() && m_engine)
+        m_engine->request(QStringLiteral("cancel"), params({{QStringLiteral("sessionId"), m_sessionId}}));
 }
 
 void QuerySession::cancel()

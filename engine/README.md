@@ -14,7 +14,7 @@
 
 | 종류 | 드라이버 | 얻는 방법 |
 |---|---|---|
-| oracle | `com.oracle.database.jdbc:ojdbc11:23.4.0.24.05` | 첫 연결 때 내려받음 |
+| oracle | `com.oracle.database.jdbc:ojdbc11:23.4.0.24.05` + `com.oracle.database.nls:orai18n` (같은 버전) | 첫 연결 때 내려받음. orai18n은 한글 KO16MSWIN949·KO16KSC5601 등 문자셋 DB용이라 받지 못해도 계속한다 |
 | mariadb | `org.mariadb.jdbc:mariadb-java-client:3.4.1` | 첫 연결 때 내려받음 |
 | mysql | `com.mysql:mysql-connector-j:8.4.0` | 첫 연결 때 내려받음 (GPL이라 함께 배포하지 않음) |
 | postgres | `org.postgresql:postgresql:42.7.4` | 첫 연결 때 내려받음 |

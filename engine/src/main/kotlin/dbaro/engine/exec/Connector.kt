@@ -20,7 +20,10 @@ import java.util.concurrent.TimeoutException
 
 /** 연결 열기와 연결 테스트. */
 object Connector {
-    /** Oracle V$SESSION의 PROGRAM·MODULE에 보일 이름. DBA가 세션을 DBaro 것으로 알아볼 수 있게 한다. */
+    /**
+     * Oracle V$SESSION의 PROGRAM·MODULE, PostgreSQL pg_stat_activity의 application_name에 보일 이름.
+     * DBA가 세션을 DBaro 것으로 알아볼 수 있게 한다 (모니터 탭의 Program 컬럼).
+     */
     const val CLIENT_NAME = "DBaro"
 
     private val pool = Executors.newCachedThreadPool(daemonThreads("connect"))
@@ -94,7 +97,11 @@ object Connector {
                 // V$SESSION.PROGRAM (기본값은 "JDBC Thin Client")
                 properties.setProperty("v\$session.program", CLIENT_NAME)
             }
-            "postgres" -> properties.setProperty("connectTimeout", timeoutSec.toString())
+            "postgres" -> {
+                properties.setProperty("connectTimeout", timeoutSec.toString())
+                // pg_stat_activity.application_name (기본값은 "PostgreSQL JDBC Driver")
+                properties.setProperty("ApplicationName", CLIENT_NAME)
+            }
             "mysql", "mariadb" -> {
                 properties.setProperty("connectTimeout", (timeoutSec * 1000).toString())
                 // YEAR를 날짜(2024-01-01)가 아니라 연도 숫자로

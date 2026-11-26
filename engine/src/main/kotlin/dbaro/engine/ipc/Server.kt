@@ -139,6 +139,21 @@ class Server(input: InputStream, output: OutputStream, private val drivers: Driv
             "executeBatch" -> withSession(id, params) {
                 it.executeBatch(params.stringList("statements"), params.bool("stopOnError", true))
             }
+            "renameImpact" -> withSession(id, params) {
+                it.renameImpact(params.string("schema"), params.string("table"), params.stringOrNull("column")?.takeIf { c -> c.isNotEmpty() })
+            }
+            "reverseModel" -> withSession(id, params) {
+                it.reverseModel(params.string("schema"), only(params), params.bool("includeViews", true))
+            }
+            "schemaDdl" -> withSession(id, params) {
+                it.schemaDdl(params.string("schema"), only(params), params.bool("includeViews", true), params.bool("includeRoutines", true))
+            }
+            "monitorSessions" -> withSession(id, params) { it.monitorSessions() }
+            "monitorLocks" -> withSession(id, params) { it.monitorLocks() }
+            "monitorSpace" -> withSession(id, params) { it.monitorSpace() }
+            "killSession" -> withSession(id, params) {
+                it.killSession(params.string("targetId"), params.bool("cancelQuery", false))
+            }
             "metaSchemas" -> withSession(id, params) { it.schemas() }
             "metaDatabases" -> withSession(id, params) { it.databases() }
             "currentSchema" -> withSession(id, params) { mapOf("schema" to it.currentSchema()) }
@@ -148,6 +163,10 @@ class Server(input: InputStream, output: OutputStream, private val drivers: Driv
             else -> replyError(id, ErrorInfo.of("Unknown method: $method"))
         }
     }
+
+    /** 리버스 엔지니어링 대상 테이블 (없거나 비면 스키마 전체) */
+    private fun only(params: Map<String, Any?>): Set<String>? =
+        params.stringList("tables").takeIf { it.isNotEmpty() }?.toSet()
 
     private fun withSession(id: Long, params: Map<String, Any?>, work: (Session) -> Map<String, Any?>) {
         val session = sessions[params.string("sessionId")]

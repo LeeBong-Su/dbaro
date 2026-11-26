@@ -96,16 +96,22 @@ abstract class RealDbTest(
         }
     }
 
-    private fun connect(autoCommit: Boolean): Session {
+    /** admin: 모든 세션을 보고 끊을 수 있는 사용자 (Oracle SYSTEM, MySQL·MariaDB root, PostgreSQL은 앱 사용자가 superuser) */
+    private fun connect(autoCommit: Boolean, admin: Boolean = false): Session {
         val env = env!!
         val url = when (type) {
             "oracle" -> "jdbc:oracle:thin:@//localhost:$port/$database"
             "postgres" -> "jdbc:postgresql://localhost:$port/$database"
             else -> "jdbc:$type://localhost:$port/$database"
         }
+        val (user, password) = when {
+            admin && oracle -> "system" to env["ORACLE_PASSWORD"]
+            admin && catalogs -> "root" to env["ROOT_PASSWORD"]
+            else -> env["DB_USER"] to env["DB_PASSWORD"]
+        }
         return Connector.open(
             drivers,
-            mapOf("type" to type, "url" to url, "user" to env["DB_USER"], "password" to env["DB_PASSWORD"], "autoCommit" to autoCommit),
+            mapOf("type" to type, "url" to url, "user" to user, "password" to password, "autoCommit" to autoCommit),
             "real-$type-${System.nanoTime()}",
         )
     }
@@ -157,6 +163,9 @@ abstract class RealDbTest(
         assertEquals("FUNCTION", byName[n("emp_count")], "function: $byName")
         assertEquals("PROCEDURE", byName[n("raise_salary")], "procedure: $byName")
         assertEquals("사원", objects.first { it["name"] == n("emp") }["remarks"])
+        // 분할 테이블의 인덱스는 테이블이 아니다 (PostgreSQL JDBC는 relkind 'I'에 종류를 주지 않는다)
+        if (type == "postgres") assertEquals("INDEX", byName["sales_hist_date_ix"], "partitioned index: $byName")
+        assertTrue(objects.none { it["type"] == null }, "untyped: $objects")
 
         val columns = session.columns(schema, n("emp"))["columns"] as List<Map<String, Any?>>
         dump("columns emp", columns)
@@ -415,6 +424,201 @@ abstract class RealDbTest(
         assertEquals(n("region"), (info["foreignKeys"] as List<Map<String, Any?>>).single()["refTable"])
         session.setSchema(schema)
         assertEquals(schema, session.currentSchema())
+    }
+
+    @Test
+    fun renameImpactListsWhatUsesTheTable() {
+        val impact = session.renameImpact(schema, n("emp"), null)
+        val objects = impact["objects"] as List<Map<String, Any?>>
+        dump("renameImpact emp", objects.joinToString("\n") {
+            "${it["type"]} ${it["schema"]}.${it["name"]} auto=${it["autoUpdated"]} before=${it["before"]} " +
+                "source=${(it["source"] as String?)?.lineSequence()?.firstOrNull()}"
+        } + "\nnotes=${impact["notes"]}")
+        val view = objects.firstOrNull { it["name"] == n("emp_dept_v") } ?: fail("emp_dept_v is missing: $objects")
+        if (type == "postgres") {
+            assertEquals(true, view["autoUpdated"])
+        } else {
+            assertContains((view["source"] as String).uppercase(), "CREATE OR REPLACE")
+        }
+        // 루틴도 찾는다 (emp를 쓰는 함수·프로시저)
+        assertTrue(objects.any { it["type"] == "PROCEDURE" || it["type"] == "FUNCTION" }, "routines: $objects")
+        assertTrue(objects.filter { it["source"] != null }.all { (it["source"] as String).isNotBlank() })
+
+        val columnImpact = session.renameImpact(schema, n("emp"), n("dept_id"))
+        dump("renameImpact emp.dept_id", (columnImpact["objects"] as List<Map<String, Any?>>).map { "${it["type"]} ${it["name"]}" })
+        assertTrue((columnImpact["objects"] as List<*>).isNotEmpty())
+    }
+
+    @Test
+    fun viewIsRecreatedFromItsSourceAfterTheRename() {
+        fun drop() {
+            for (sql in listOf("DROP VIEW ren_v", "DROP TABLE ren_t", "DROP TABLE ren_t2")) runCatching { session.execute(sql, 10, 0) }
+        }
+        drop()
+        try {
+            session.execute("CREATE TABLE ren_t (id INT PRIMARY KEY, amount INT)", 10, 0)
+            session.execute("CREATE VIEW ren_v AS SELECT id, amount FROM ren_t", 10, 0)
+            val view = (session.renameImpact(schema, n("ren_t"), null)["objects"] as List<Map<String, Any?>>)
+                .first { it["name"] == n("ren_v") }
+            session.execute(if (catalogs) "RENAME TABLE ren_t TO ren_t2" else "ALTER TABLE ren_t RENAME TO ren_t2", 10, 0)
+            if (view["autoUpdated"] != true) {
+                // 앱이 하는 것처럼 소스의 이름만 바꿔 다시 만든다 (끝의 ; 는 JDBC로 보낼 때 뺀다)
+                val sql = Regex("(?i)(?<![\\w$#])ren_t(?![\\w$#])").replace(view["source"] as String, "ren_t2").trim().removeSuffix(";").trim()
+                dump("recreated view", sql)
+                session.execute(sql, 10, 0)
+            }
+            assertEquals(0, num(scalar("SELECT COUNT(*) FROM ren_v")).toInt())
+        } finally {
+            drop()
+        }
+    }
+
+    @Test
+    fun reverseEngineersTheSchemaModel() {
+        val model = session.reverseModel(schema, null, includeViews = true)
+        val tables = model["tables"] as List<Map<String, Any?>>
+        dump("reverseModel", tables.joinToString("\n") { t ->
+            "${t["type"]} ${t["name"]} rows=${t["rows"]} pk=${(t["primaryKey"] as Map<*, *>?)?.get("columns")} " +
+                "fks=${(t["foreignKeys"] as List<Map<*, *>>).map { "${it["columns"]}->${it["refTable"]}${it["refColumns"]}" }} " +
+                "indexes=${(t["indexes"] as List<Map<*, *>>).map { it["name"] }}"
+        })
+        val byName = tables.associateBy { it["name"] }
+        fun table(name: String) = byName[n(name)] ?: fail("${n(name)} is missing: ${byName.keys}")
+        fun foreignKeys(name: String) = table(name)["foreignKeys"] as List<Map<String, Any?>>
+
+        val emp = table("emp")
+        assertEquals(listOf(n("emp_id")), (emp["primaryKey"] as Map<*, *>)["columns"])
+        val empColumns = emp["columns"] as List<Map<String, Any?>>
+        assertEquals(n("emp_id"), empColumns.first()["name"])
+        assertEquals(true, empColumns.first()["primaryKey"])
+        assertEquals("사원 이름", empColumns.first { it["name"] == n("emp_name") }["remarks"])
+        assertEquals(true, empColumns.first { it["name"] == n("dept_id") }["foreignKey"])
+        // 자기 참조와 다른 테이블 참조
+        assertEquals(setOf(n("dept"), n("emp")), foreignKeys("emp").map { it["refTable"] }.toSet())
+        // 두 컬럼 외래 키는 컬럼 순서를 지킨다
+        val shipment = foreignKeys("shipment").single { it["refTable"] == n("order_item") }
+        assertEquals(listOf(n("order_id"), n("line_no")), shipment["columns"])
+        assertEquals(listOf(n("order_id"), n("line_no")), shipment["refColumns"])
+        assertTrue((table("orders")["indexes"] as List<Map<String, Any?>>).any { it["name"] == n("orders_status_ix") })
+        assertEquals("VIEW", table("emp_dept_v")["type"])
+        assertTrue((table("orders")["rows"] as Long? ?: 0) >= 0)
+        // PostgreSQL 파티션 자식은 부모 하나로
+        if (type == "postgres") {
+            assertEquals("PARTITIONED TABLE", table("sales_hist")["type"])
+            assertFalse(byName.containsKey("sales_hist_2023"))
+        }
+
+        // 고른 테이블만
+        val some = session.reverseModel(schema, setOf(n("dept"), n("emp")), includeViews = false)
+        assertEquals(listOf(n("dept"), n("emp")), (some["tables"] as List<Map<String, Any?>>).map { it["name"] })
+    }
+
+    @Test
+    fun schemaDdlPutsReferencedTablesFirst() {
+        val result = session.schemaDdl(schema, null, includeViews = true, includeRoutines = true)
+        val script = result["script"] as String
+        dump("schemaDdl", script.take(3000) + "\n... (${script.length} chars, objects=${result["objects"]}, failed=${result["failed"]})")
+        assertEquals(emptyList<Any>(), result["failed"])
+        assertEquals(emptyList<Any>(), result["cycle"])
+        fun at(name: String): Int {
+            val i = Regex("CREATE TABLE [^\\n(]*\\b${Regex.escape(n(name))}\\b[`\"]?\\s*\\(", RegexOption.IGNORE_CASE).find(script)?.range?.first
+            return i ?: fail("no CREATE TABLE $name")
+        }
+        assertTrue(at("dept") < at("emp"), "dept before emp")
+        assertTrue(at("emp") < at("orders"), "emp before orders")
+        assertTrue(at("orders") < at("order_item") && at("order_item") < at("shipment"), "orders → order_item → shipment")
+        assertContains(script, n("emp_dept_v"))
+        if (type != "mysql" && type != "mariadb") assertContains(script, n("order_seq"))
+        if (catalogs) assertContains(script, "SET FOREIGN_KEY_CHECKS = 0;")
+    }
+
+    @Test
+    fun monitorsSessionsLocksAndKillsTheBlocker() {
+        val admin = connect(autoCommit = true, admin = true)
+        val blocker = connect(autoCommit = false)
+        val waiter = connect(autoCommit = false)
+        val worker = Executors.newSingleThreadExecutor()
+        try {
+            val update = "UPDATE dept SET dept_name = dept_name WHERE dept_id = 10"
+            blocker.execute(update, 10, 0)
+            val blocked = worker.submit<Map<String, Any?>> { waiter.execute(update, 10, 0) }
+
+            // 기다리는 세션이 보일 때까지 (최대 10초)
+            var locks: Map<String, Any?> = emptyMap()
+            for (attempt in 1..40) {
+                locks = admin.monitorLocks()
+                if ((locks["waits"] as List<*>).isNotEmpty()) break
+                Thread.sleep(250)
+            }
+            dump("monitorLocks", locks)
+            assertEquals(emptyMap<String, String>(), locks["errors"])
+            val wait = (locks["waits"] as List<Map<String, Any?>>).firstOrNull() ?: fail("no lock wait: $locks")
+            assertNotNull(wait["blockerId"])
+            assertTrue((locks["held"] as List<*>).isNotEmpty(), "held locks: $locks")
+
+            val sessions = admin.monitorSessions()
+            dump("monitorSessions", sessions)
+            val list = sessions["sessions"] as List<Map<String, Any?>>
+            assertTrue(list.any { it["self"] == true }, "the monitor's own session")
+            val waiterRow = list.first { it["id"] == wait["waiterId"] }
+            assertEquals(listOf(wait["blockerId"]), waiterRow["blockedBy"])
+            assertEquals(true, waiterRow["active"])
+            assertTrue(list.any { it["id"] == wait["blockerId"] }, "the blocker is listed")
+
+            // 막고 있는 세션을 끊으면 기다리던 문장이 이어서 끝난다
+            val killed = admin.killSession(wait["blockerId"] as String, cancelQuery = false)
+            dump("killSession", killed)
+            blocked.get(20, TimeUnit.SECONDS)
+            waiter.rollback()
+            assertFailsWith<IllegalArgumentException> { admin.killSession("1; DROP TABLE dept", false) }
+        } finally {
+            worker.shutdownNow()
+            runCatching { waiter.rollback() }
+            for (s in listOf(waiter, blocker, admin)) runCatching { s.close() }
+        }
+    }
+
+    @Test
+    fun monitorsAsTheAppUser() {
+        // 권한이 적은 사용자도 오류 없이 볼 수 있는 만큼 본다 (MySQL은 자기 세션만, 안내 글)
+        val result = session.monitorSessions()
+        dump("monitorSessions (app user)", result)
+        assertTrue((result["sessions"] as List<Map<String, Any?>>).any { it["self"] == true })
+    }
+
+    @Test
+    fun spaceUsage() {
+        val admin = connect(autoCommit = true, admin = true)
+        try {
+            val space = admin.monitorSpace()
+            dump("monitorSpace", space)
+            assertEquals(emptyMap<String, String>(), space["errors"])
+            val tablespaces = space["tablespaces"] as List<Map<String, Any?>>
+            val databases = space["databases"] as List<Map<String, Any?>>
+            val objects = space["objects"] as List<Map<String, Any?>>
+            when (type) {
+                "oracle" -> {
+                    val system = tablespaces.first { it["name"] == "SYSTEM" }
+                    assertTrue((system["allocatedBytes"] as Long) > 0 && (system["usedBytes"] as Long) > 0, "$system")
+                    assertTrue(tablespaces.any { it["type"] == "TEMPORARY" && it["freeBytes"] != null }, "temp free")
+                    assertTrue((databases.single()["bytes"] as Long) > 0)
+                }
+                "postgres" -> {
+                    assertTrue(tablespaces.any { it["name"] == "pg_default" && (it["allocatedBytes"] as Long) > 0 })
+                    assertTrue(databases.any { it["name"] == database && it["current"] == true && (it["bytes"] as Long) > 0 })
+                    assertTrue(objects.any { it["name"] == "order_item" }, "order_item in the top tables")
+                }
+                else -> {
+                    assertTrue(databases.any { it["name"] == database && (it["bytes"] as Long) > 0 })
+                    assertTrue(objects.any { it["name"] == "order_item" }, "order_item in the top tables")
+                    if (type == "mysql") assertTrue(tablespaces.any { it["name"] == "innodb_system" }, "$tablespaces")
+                }
+            }
+            val sizes = objects.map { it["bytes"] as Long }
+            assertTrue(sizes.isNotEmpty() && sizes == sizes.sortedDescending(), "largest first: $sizes")
+        } finally {
+            admin.close()
+        }
     }
 
     @Test

@@ -22,6 +22,9 @@ class QTabWidget;
 class QTimer;
 class QToolButton;
 class ConsoleTab;
+class MonitorTab;
+class AiPanel;
+class ReverseTab;
 class ObjectExplorer;
 class PlanObjectWindow;
 class QueryTab;
@@ -57,6 +60,8 @@ public:
     void showHistory();
     // 연결 설정이 바뀌었을 때 (이름, 환경 색, DB 종류)
     void refreshConnection();
+    // SQL을 새 쿼리 탭에 연다 (실행하지 않는다). AI 도우미의 제안, Claude Code의 open_in_dbaro
+    void openSqlTab(const QString &sql, const QString &title);
 
 signals:
     void windowClosed();
@@ -90,6 +95,16 @@ private:
     QueryTab *queryTabFor(const QString &metadataId);
     // CLI 탭 (dbaro-cli 대화형을 창 안에서). 지금 쿼리 탭의 스키마로 시작한다.
     ConsoleTab *openConsole();
+    // 모니터 탭 (세션·락·용량, page는 MonitorTab::Page). 창마다 하나: 이미 있으면 그 탭의 그 페이지로 간다.
+    // 지금 보고 있는 DB로 자기 세션을 따로 연다.
+    MonitorTab *openMonitor(int page);
+    // 리버스 엔지니어링 (ERD·테이블 정의·DDL). 대상(스키마·테이블)을 묻고 새 탭을 연다.
+    // schema가 비면 지금 쿼리 탭의 스키마에서 시작한다.
+    ReverseTab *openReverseEngineering(const QString &metadataId, const QString &schema);
+    // 이름 바꾸기 리팩토링 (column이 비면 테이블). 파일·열린 탭은 바로 고치고, DB는 스크립트를 새 쿼리 탭에 연다.
+    void openRename(const QString &metadataId, const QString &schema, const QString &table, const QString &column);
+    // 이 연결·스키마로 사용자의 Claude Code를 새 터미널에서 연다 (ClaudeCodeLauncher)
+    void openClaudeCode();
     void closeQueryTab(int index);
     void selectAdjacentTab(int step); // 다음(+1)·이전(-1) 탭. 끝에서는 반대쪽 끝으로
     void openObject(const QString &metadataId, const QString &schema, const QString &name);
@@ -161,6 +176,15 @@ private:
     QAction *m_newTabAction = nullptr;
     QAction *m_consoleAction = nullptr;
     QAction *m_scriptFoldersAction = nullptr;
+    QAction *m_sessionMonitorAction = nullptr;
+    QAction *m_lockMonitorAction = nullptr;
+    QAction *m_spaceUsageAction = nullptr;
+    QAction *m_reverseAction = nullptr;
+    QAction *m_aiAction = nullptr;
+    QAction *m_claudeCodeAction = nullptr;
+    QAction *m_openClaudeAction = nullptr;
+    QDockWidget *m_aiDock = nullptr;
+    AiPanel *m_aiPanel = nullptr;
     QAction *m_closeTabAction = nullptr;
     QAction *m_nextTabAction = nullptr;
     QAction *m_previousTabAction = nullptr;
