@@ -80,7 +80,8 @@ build_dir="$repo/build/package-macos"
 step 'Building the app (Release)'
 cmake -S "$repo/app" -B "$build_dir" -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$qt_dir" \
     -DCMAKE_OSX_ARCHITECTURES="$arch"
-cmake --build "$build_dir" --target dbaro dbaro-cli --parallel
+# 숫자 없는 --parallel은 Makefile에서 제한 없는 병렬(-j)이라 파일이 많으면 메모리가 모자라 멈춘다. CPU 수만큼만
+cmake --build "$build_dir" --target dbaro dbaro-cli --parallel "$(sysctl -n hw.ncpu)"
 
 step 'Building the engine'
 export JAVA_HOME="$jdk_home"
