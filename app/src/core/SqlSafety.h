@@ -11,6 +11,10 @@ QString leadingKeyword(const QString &sql);
 // 데이터나 구조를 바꿀 수 있는 문장 (읽기 전용 연결에서 막는다). PL/SQL 블록과 프로시저 호출도 포함한다.
 bool mayModify(const QString &sql);
 
+// 괄호 안까지 통틀어 쓰기 키워드가 있는지 (INSERT·UPDATE·DELETE·MERGE·INTO·CREATE·DROP 등).
+// WITH d AS (DELETE ... RETURNING *) SELECT ..., SELECT ... INTO 처럼 첫 키워드만으로는 모르는 쓰기를 찾는다
+bool hasWriteKeyword(const QString &sql);
+
 // 트랜잭션에 남는 데이터 변경 (INSERT, UPDATE, DELETE, MERGE, UPSERT, REPLACE)
 bool isDml(const QString &sql);
 

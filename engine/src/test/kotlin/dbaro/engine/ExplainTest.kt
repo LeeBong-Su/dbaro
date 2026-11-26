@@ -69,6 +69,8 @@ class ExplainTest {
         assertEquals("DBaro", properties.getProperty("v\$session.program"))
         assertEquals("hr", properties.getProperty("user"))
         assertFalse(Connector.connectionProperties("postgres", emptyMap(), 10).containsKey("v\$session.program"))
+        // PostgreSQL은 pg_stat_activity.application_name
+        assertEquals("DBaro", Connector.connectionProperties("postgres", emptyMap(), 10).getProperty("ApplicationName"))
         assertTrue(Connector.connectionProperties("oracle", emptyMap(), 10).getProperty("remarksReporting") == "true")
     }
     @Test

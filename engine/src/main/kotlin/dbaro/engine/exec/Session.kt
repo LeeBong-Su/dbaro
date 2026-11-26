@@ -234,6 +234,31 @@ class Session(val id: String, private val type: String, private val connection: 
 
     fun planObject(request: PlanObject.Request): Map<String, Any?> = PlanObject.describe(type, connection, request)
 
+    /** 이름 바꾸기 리팩토링 ([Refactor]): 테이블·컬럼 이름을 쓰는 DB 객체와 그 소스 */
+    fun renameImpact(schema: String, table: String, column: String?): Map<String, Any?> =
+        timed { Refactor.renameImpact(type, connection, schema, table, column) }
+
+    /** 리버스 엔지니어링 ([Reverse]): 스키마 모델(테이블·컬럼·키·인덱스) */
+    fun reverseModel(schema: String, only: Set<String>?, includeViews: Boolean): Map<String, Any?> =
+        timed { Reverse.model(type, connection, schema, only, includeViews) }
+
+    /** 스키마 전체 DDL. 객체 사이에서 cancel로 멈춘다. */
+    fun schemaDdl(schema: String, only: Set<String>?, includeViews: Boolean, includeRoutines: Boolean): Map<String, Any?> {
+        cancelRequested = false
+        return timed { Reverse.schemaDdl(type, connection, schema, only, includeViews, includeRoutines) { cancelRequested } }
+    }
+
+    /** 모니터링 ([Monitor]): 세션 목록, 락 대기, 용량, 세션 종료 */
+    fun monitorSessions(): Map<String, Any?> = timed { Monitor.sessions(type, connection) }
+    fun monitorLocks(): Map<String, Any?> = timed { Monitor.locks(type, connection) }
+    fun monitorSpace(): Map<String, Any?> = timed { Monitor.space(type, connection) }
+    fun killSession(sessionId: String, cancelQuery: Boolean): Map<String, Any?> = Monitor.kill(type, connection, sessionId, cancelQuery)
+
+    private fun timed(work: () -> Map<String, Any?>): Map<String, Any?> {
+        val start = System.nanoTime()
+        return work() + ("elapsedMs" to (System.nanoTime() - start) / 1_000_000)
+    }
+
     /**
      * 문장 여러 개를 차례로 실행한다 (데이터 불러오기, 결과 편집 적용). 앱과 한 번만 주고받는다.
      * JDBC 배치는 실패한 지점을 드라이버마다 다르게 알려 줘서 쓰지 않고, 하나씩 실행해 정확히 남긴다.
@@ -380,15 +405,27 @@ class Session(val id: String, private val type: String, private val connection: 
         val schemaPattern = if (usesCatalogs) null else pattern(schema)
         val objects = ArrayList<Map<String, Any?>>()
 
+        val untyped = ArrayList<String>() // 드라이버가 종류를 주지 않은 객체
         meta.getTables(catalog, schemaPattern, "%", null).use { rs ->
             while (rs.next() && objects.size < MAX_OBJECTS) {
+                val name = rs.getString("TABLE_NAME")
+                val tableType = rs.getString("TABLE_TYPE")
+                if (tableType == null) untyped.add(name)
                 objects.add(
                     mapOf(
-                        "name" to rs.getString("TABLE_NAME"),
-                        "type" to (rs.getString("TABLE_TYPE") ?: "TABLE"),
+                        "name" to name,
+                        "type" to (tableType ?: "TABLE"),
                         "remarks" to rs.getString("REMARKS"),
                     ),
                 )
+            }
+        }
+        // PostgreSQL JDBC는 분할 테이블의 인덱스(relkind 'I')에 종류를 주지 않는다. 테이블로 보이지 않게 pg_class에서 찾는다
+        if (type == "postgres" && untyped.isNotEmpty()) {
+            val kinds = runCatching { postgresRelkinds(schema, untyped) }.getOrDefault(emptyMap())
+            for (i in objects.indices) {
+                val kind = kinds[objects[i]["name"]] ?: continue
+                objects[i] = objects[i] + ("type" to relkindType(kind))
             }
         }
 
@@ -416,6 +453,30 @@ class Session(val id: String, private val type: String, private val connection: 
             }
         }
         return mapOf("objects" to objects, "truncated" to (objects.size >= MAX_OBJECTS))
+    }
+
+    private fun postgresRelkinds(schema: String, names: List<String>): Map<String, String> {
+        val kinds = HashMap<String, String>()
+        connection.prepareStatement(
+            "SELECT c.relname, c.relkind::text FROM pg_catalog.pg_class c " +
+                "JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = ? AND c.relname = ANY(?)",
+        ).use { st ->
+            st.setString(1, schema)
+            st.setArray(2, connection.createArrayOf("text", names.toTypedArray()))
+            st.executeQuery().use { rs -> while (rs.next()) kinds[rs.getString(1)] = rs.getString(2) }
+        }
+        return kinds
+    }
+
+    private fun relkindType(kind: String) = when (kind) {
+        "i", "I" -> "INDEX"
+        "S" -> "SEQUENCE"
+        "v" -> "VIEW"
+        "m" -> "MATERIALIZED VIEW"
+        "p" -> "PARTITIONED TABLE"
+        "f" -> "FOREIGN TABLE"
+        "c" -> "TYPE"
+        else -> "TABLE"
     }
 
     fun columns(schema: String, table: String): Map<String, Any?> {
@@ -456,22 +517,8 @@ class Session(val id: String, private val type: String, private val connection: 
         return name.replace(escape, escape + escape).replace("_", escape + "_").replace("%", escape + "%")
     }
 
-    private fun columnType(rs: ResultSet): String {
-        val typeName = rs.getString("TYPE_NAME") ?: "?"
-        val size = rs.getInt("COLUMN_SIZE").takeUnless { rs.wasNull() } ?: 0
-        val digits = rs.getInt("DECIMAL_DIGITS").takeUnless { rs.wasNull() } ?: 0
-        if (typeName.contains('(')) return typeName
-        return when (rs.getInt("DATA_TYPE")) {
-            Types.CHAR, Types.VARCHAR, Types.NCHAR, Types.NVARCHAR, Types.BINARY, Types.VARBINARY ->
-                if (size > 0) "$typeName($size)" else typeName
-            Types.NUMERIC, Types.DECIMAL -> when {
-                size > 0 && digits > 0 -> "$typeName($size,$digits)"
-                size > 0 -> "$typeName($size)"
-                else -> typeName
-            }
-            else -> typeName
-        }
-    }
+    /** 탐색기·자동완성의 컬럼 타입 글 (테이블 상세·리버스 엔지니어링과 같은 규칙) */
+    private fun columnType(rs: ResultSet): String = TableInfo.columnType(rs)
 
     fun commit() = connection.commit()
 

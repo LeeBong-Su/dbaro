@@ -518,10 +518,16 @@ void ConnectionDialog::updateTypeDependentWidgets()
     m_databaseLabel->setText(Db::databaseLabel(type, sid));
     m_database->setPlaceholderText(Db::databasePlaceholder(type, sid));
     m_initSql->setPlaceholderText(Db::initSqlHint(type));
-    m_driverHint->setText(Db::requiresDriverPath(type)
-                              ? tr("Required. Select tibero7-jdbc.jar from the Tibero client (client/lib/jar). "
-                                   "The vendor driver cannot be bundled with DBaro.")
-                              : tr("Leave empty to download the driver automatically on first connect."));
+    QString hint = Db::requiresDriverPath(type)
+                       ? tr("Required. Select tibero7-jdbc.jar from the Tibero client (client/lib/jar). "
+                            "The vendor driver cannot be bundled with DBaro.")
+                       : tr("Leave empty to download the driver automatically on first connect.");
+    if (type == DbType::Oracle)
+        hint += u' '
+                + tr("orai18n.jar (for KO16MSWIN949, KO16KSC5601 and other character sets) is downloaded too; "
+                     "with your own driver, put it in the same folder.");
+    hint += u' ' + tr("Separate several jar files with ;.");
+    m_driverHint->setText(hint);
 }
 
 void ConnectionDialog::updateUrlPreview()

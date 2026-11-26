@@ -66,5 +66,41 @@ class DriverDownloadTest {
         assertFalse(Files.exists(dir.resolve("demo-1.0.jar")))
     }
 
+    @Test
+    fun downloadsCompanionsButGoesOnWithoutThem() {
+        val dir = Files.createTempDirectory("drivers")
+        val registry = registry(dir)
+        val spec = DriverRegistry.Spec(
+            "demo.Driver",
+            DriverRegistry.Artifact("org.example", "demo", "1.0"),
+            listOf(DriverRegistry.Artifact("org.example", "nls", "1.0")),
+        )
+        // 함께 쓰는 jar도 받는다
+        assertEquals(listOf("demo-1.0.jar", "nls-1.0.jar"), registry.builtInJars(spec).map { it.fileName.toString() })
+
+        // 함께 쓰는 jar를 받지 못하면(체크섬이 틀림·폐쇄망) 빼고 계속한다. 같은 실행에서는 다시 받으려 하지 않는다
+        val partial = registry(Files.createTempDirectory("drivers"))
+        val main = partial.download(spec.artifact!!)
+        checksum = "0".repeat(40)
+        assertEquals(listOf(main), partial.builtInJars(spec))
+        val attempts = downloads
+        assertEquals(listOf(main), partial.builtInJars(spec))
+        assertEquals(attempts, downloads, "no second attempt")
+    }
+
+    @Test
+    fun userJarsTakeAListAndOraclesNlsJar() {
+        val dir = Files.createTempDirectory("jdbc")
+        val ojdbc = Files.write(dir.resolve("ojdbc8.jar"), ByteArray(1))
+        val nls = Files.write(dir.resolve("orai18n.jar"), ByteArray(1))
+        val other = Files.write(Files.createTempDirectory("jdbc").resolve("extra.jar"), ByteArray(1))
+        val registry = registry(Files.createTempDirectory("drivers"))
+        // Oracle: 같은 폴더의 orai18n.jar를 함께
+        assertEquals(listOf(ojdbc, nls).map { it.toAbsolutePath().normalize() }, registry.userJars("oracle", ojdbc.toString()))
+        // 다른 DB는 지정한 것만, ';'로 여러 개
+        assertEquals(listOf(ojdbc, other).map { it.toAbsolutePath().normalize() }, registry.userJars("tibero", "$ojdbc ; $other"))
+        assertFailsWith<IOException> { registry.userJars("oracle", dir.resolve("missing.jar").toString()) }
+    }
+
     private fun sha1(bytes: ByteArray) = MessageDigest.getInstance("SHA-1").digest(bytes).joinToString("") { "%02x".format(it) }
 }

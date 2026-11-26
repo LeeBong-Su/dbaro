@@ -60,6 +60,9 @@ public:
     QString preferredSchema() const { return m_preferredSchema; }
     void setPreferredSchema(const QString &schema) { m_preferredSchema = schema; }
 
+    // 마지막으로 실패한 문장과 오류 (AI 도우미의 Fix Error). 없으면 빈 값
+    QString lastError() const { return m_lastError; }
+
     // "USE x" 문장이면 x를 돌려준다 (MySQL·MariaDB). 아니면 빈 문자열.
     static QString useTarget(const QString &sql);
 
@@ -106,6 +109,7 @@ private:
     TextFileFormat m_fileFormat;
     QPointer<MetadataService> m_metadata;
     QString m_preferredSchema;
+    QString m_lastError;
     bool m_wasConnected = false;
     SqlDialect m_dialect = SqlDialect::Generic;
     ConnectionBar *m_connectionBar = nullptr;

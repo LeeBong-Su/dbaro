@@ -95,6 +95,20 @@ bool SqlSafety::mayModify(const QString &sql)
     return modifying.contains(leadingKeyword(sql));
 }
 
+bool SqlSafety::hasWriteKeyword(const QString &sql)
+{
+    static const QSet<QString> writes{
+        QStringLiteral("INSERT"), QStringLiteral("UPDATE"),   QStringLiteral("DELETE"), QStringLiteral("MERGE"),
+        QStringLiteral("UPSERT"), QStringLiteral("INTO"),     QStringLiteral("CREATE"), QStringLiteral("ALTER"),
+        QStringLiteral("DROP"),   QStringLiteral("TRUNCATE"), QStringLiteral("GRANT"),  QStringLiteral("REVOKE"),
+    };
+    for (const Word &word : words(sql)) {
+        if (writes.contains(word.text))
+            return true;
+    }
+    return false;
+}
+
 bool SqlSafety::isDml(const QString &sql)
 {
     static const QSet<QString> dml{QStringLiteral("INSERT"), QStringLiteral("UPDATE"), QStringLiteral("DELETE"),

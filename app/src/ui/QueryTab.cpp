@@ -282,6 +282,8 @@ void QueryTab::updateConnectionBar()
 
 void QueryTab::showError(const SqlStatement &statement, const EngineError &error)
 {
+    // AI 도우미의 "Fix Error"가 쓴다
+    m_lastError = QStringLiteral("```sql\n%1\n```\nError: %2").arg(statement.originalText().trimmed(), error.message.trimmed());
     // 에디터에 없는 문장(탐색기에서 보낸 USE 등)이면 로그만 보여 준다.
     if (statement.start < 0) {
         m_results->showLog();

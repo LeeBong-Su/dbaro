@@ -4,7 +4,7 @@
 #include <QWidget>
 
 class QLabel;
-class QPlainTextEdit;
+class BlockSelectTextView;
 class QStackedWidget;
 class QStandardItemModel;
 class QToolButton;
@@ -48,7 +48,7 @@ private:
     QStackedWidget *m_stack = nullptr;
     QTreeView *m_tree = nullptr;
     QStandardItemModel *m_model = nullptr;
-    QPlainTextEdit *m_text = nullptr;
+    BlockSelectTextView *m_text = nullptr;
     bool m_actual = false;
     int m_linkColumn = 0; // 객체 이름 링크가 있는 컬럼 (Object, 없으면 첫 칸)
 };

@@ -230,9 +230,10 @@ object TableInfo {
         return name.replace(escape, escape + escape).replace("_", escape + "_").replace("%", escape + "%")
     }
 
-    private fun columnType(rs: ResultSet): String {
+    internal fun columnType(rs: ResultSet): String {
         val typeName = rs.getString("TYPE_NAME") ?: "?"
-        val size = rs.getInt("COLUMN_SIZE").takeUnless { rs.wasNull() } ?: 0
+        // 길이 제한이 없는 타입(PostgreSQL text·bytea 등)은 드라이버가 최대값(2147483647)을 준다: 길이를 붙이지 않는다
+        val size = (rs.getInt("COLUMN_SIZE").takeUnless { rs.wasNull() } ?: 0).takeIf { it < 1_000_000_000 } ?: 0
         val digits = rs.getInt("DECIMAL_DIGITS").takeUnless { rs.wasNull() } ?: 0
         if (typeName.contains('(')) return typeName
         return when (rs.getInt("DATA_TYPE")) {

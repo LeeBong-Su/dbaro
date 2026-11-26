@@ -60,6 +60,9 @@ signals:
     void ddlRequested(const QString &connectionId, const QString &schema, const QString &name);
     void tableDetailsRequested(const QString &connectionId, const QString &schema, const QString &name);
     void importRequested(const QString &connectionId, const QString &schema, const QString &name); // 이름이 비면 새 테이블
+    void reverseEngineerRequested(const QString &connectionId, const QString &schema); // ERD·DDL
+    // 이름 바꾸기 리팩토링. column이 비면 테이블
+    void renameRequested(const QString &connectionId, const QString &schema, const QString &table, const QString &column);
     void insertTextRequested(const QString &text);
     void editConnectionRequested(const QString &connectionId);
 

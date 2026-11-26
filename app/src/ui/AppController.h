@@ -68,6 +68,8 @@ public:
         m_specOverride = std::move(override);
     }
     void forgetPassword(const QString &connectionId);
+    // SQL 파일의 내용을 그 창의 새 쿼리 탭에 연다 (실행하지 않는다). dbaro-cli mcp의 임시 파일이면 지운다
+    void openSqlFile(MainWindow *window, const QString &path, const QString &title);
 
     // 연결 창을 열면(탭을 고르면) 바로 접속한다. 테스트 도구는 끌 수 있다.
     bool autoConnect() const { return m_autoConnect; }

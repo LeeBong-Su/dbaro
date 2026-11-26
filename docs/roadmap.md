@@ -48,21 +48,29 @@
 - [x] PostgreSQL 쿼리 탭에서 데이터베이스 바꾸기
   연결 정보 막대의 Database 목록(엔진 `metaDatabases`). 세션 안에서는 못 바꿔서 그 탭만 그 DB로 다시 접속한다(커밋 안 된 변경은 먼저 확인). 탭마다 기억해서 다시 켜도 유지, 자동완성·스키마 목록·DDL·테이블 상세는 그 탭의 DB, 탐색기·새 탭·CLI 탭은 지금 탭의 DB를 따른다. 개발용 두 번째 DB `dbaro_archive`(`dev/seed/postgres/02-archive-db.sql`).
 
+- [x] 세션·락 모니터, 세션 종료
+  Database → Session Monitor(Ctrl+Alt+M)·Lock Waits. 모니터 탭이 자기 세션으로 세션 목록(대기, 막힌·막는 세션 색, 실행 중·마지막 SQL, 트랜잭션 시간)과 락 대기 트리·잡힌 락을 5초마다 읽는다. Kill Session·Cancel Statement(확인, 운영 경고, 읽기 전용이면 막음). Oracle `V$SESSION`, PostgreSQL `pg_stat_activity`·`pg_blocking_pids`, MySQL `data_lock_waits`, MariaDB `INNODB_LOCK_WAITS`. 권한이 모자라면 무엇이 필요한지 알린다. Tibero는 같은 이름의 뷰로 맞췄지만 확인하지 못했다.
+- [x] 테이블스페이스·DB 크기 사용량
+  Database → Space Usage. 테이블스페이스 사용률 막대(할당 대비, 자동 확장이면 최대 대비도), DB·스키마 크기, 큰 테이블·세그먼트 50개. Oracle `DBA_DATA_FILES`·`DBA_FREE_SPACE`·`DBA_SEGMENTS`, PostgreSQL `pg_database_size`·`pg_total_relation_size`, MySQL `information_schema.FILES`·`TABLES`.
+
 ## 2차개선
 
-- [ ] 리버스 엔지니어링 (DB 구조 → 모델·ERD·DDL 스크립트)
+- [x] 리버스 엔지니어링 (DB 구조 → 모델·ERD·DDL 스크립트)
+  Database → Reverse Engineer, 탐색기 스키마 오른쪽 클릭. 스키마·테이블을 고르면 탭에 ERD(PK·FK 표시, 외래 키 선, 가리켜지는 테이블을 왼쪽에 두는 자동 배치, 끌어 옮기기, Ctrl+휠 확대, 컬럼 전부·키만·이름만, PNG·SVG 내보내기는 흰 바탕), 테이블 정의(컬럼·키·참조·코멘트·인덱스·FK, 엑셀·CSV·Markdown 테이블 정의서), 스키마 DDL(외래 키 순서, 저장·쿼리 탭으로). 모델은 스키마 단위 시스템 뷰로 한 번에 읽어 빠르다. 남은 것: Oracle DDL은 DBMS_METADATA를 객체마다 여러 번 불러 객체당 1초쯤 걸린다(한 번에 받아 오기), ERD 배치 저장.
 - [x] 외래 키(FK) 기반 JOIN 자동 완성 (`JOIN dept d ON ` 뒤에 `d.DEPT_ID = e.DEPT_ID`, `JOIN ` 뒤에 `DEPT d ON ...` 처럼 이어진 테이블까지. 양쪽 방향·여러 컬럼 키)
-- [ ] 이름 바꾸기 리팩토링: 테이블·컬럼 이름을 바꿀 때 그 객체를 참조하는 SQL 파일·뷰·프로시저를 찾아 함께 고친다
-- [ ] AI 에이전트형 DB 도구 (AI 모델 연결)
+- [x] 이름 바꾸기 리팩토링: 테이블·컬럼 이름을 바꿀 때 그 객체를 참조하는 SQL 파일·뷰·프로시저를 찾아 함께 고친다
+  탐색기 테이블·컬럼 오른쪽 클릭 → Rename. 새 이름을 넣고 Find References: DB 객체(엔진 `renameImpact`: Oracle `ALL_DEPENDENCIES`·시노님, PostgreSQL 함수 본문(뷰·제약 조건은 PostgreSQL이 스스로), MySQL 뷰·루틴·트리거), 스크립트 폴더의 SQL 파일, 열린 쿼리 탭. 찾기는 `SqlRename`(주석은 건너뛰고 문자열 안은 기본 끔, 따옴표 이름은 대소문자 그대로, 다른 스키마로 한정한 이름은 제외, 컬럼은 그 테이블을 쓰는 문장 안에서만·별칭(`FROM emp e`)·NEW·OLD로 한정하면 확실, 다른 한정자면 끔). 곳마다 체크하고 전·후 줄 미리보기. Apply: 파일은 바로 쓰고(인코딩 유지, 찾은 뒤 바뀐 파일은 건너뜀), 탭은 한 번의 편집(Ctrl+Z), DB는 이름 바꾸는 문장 + 다시 만드는 객체를 새 쿼리 탭에 연다(실행해야 바뀐다). MariaDB는 `CREATE OR REPLACE`, MySQL은 지우고 다시 만들며 원래 정의를 주석으로 남긴다. Oracle·PostgreSQL·MySQL·MariaDB에서 바꾸고 되돌리는 왕복 확인.
+- [x] AI 에이전트형 DB 도구 (AI 모델 연결)
+  Database → AI Assistant(Ctrl+Alt+I), 오른쪽 도크. Claude(Opus 5.5 기본, Sonnet·Haiku 5.5)와 대화하며 AI가 도구로 이 DB를 직접 살핀다: 스키마·테이블 목록, 테이블 구조(컬럼·키·참조·인덱스·코멘트), DDL, 읽기 전용 조회(문장 하나, 따로 연 읽기 전용 세션, 기본 100행, WITH 안의 DELETE·SELECT INTO·FOR UPDATE도 막음), 예상 실행 계획. 데이터·구조를 바꾸는 SQL은 실행하지 않고 제안만 해서 사용자가 쿼리 탭에서 연다. 빠른 작업: 에디터 SQL 설명(Explain SQL)·성능 검토(Tune SQL)·마지막 오류 고치기(Fix Error). 처음 쓸 때 무엇이 전송되는지 안내하고 동의를 받는다. 운영 DB는 조회마다 승인, 결과 값을 보내지 않는 설정(컬럼 이름·행 수만). API 키는 자격 증명 관리자, 회사 게이트웨이 주소 지정 가능. 가짜 API 서버로 스트리밍·도구 루프 단위 테스트(`dbaro_ai_tests`), Oracle·PostgreSQL·MySQL에서 도구 확인. 실제 API 호출은 키가 있어야 확인할 수 있다.
+  Claude 구독으로 쓰기: Database → Use with Claude Code... 로 `dbaro-cli mcp`(MCP 서버)를 사용자의 Claude Code·Claude Desktop에 등록하면 API 키 없이 같은 도구를 쓴다(연결 고르기, 운영 연결은 조회 막음, 바꾸는 SQL은 `open_in_dbaro`로 DBaro 새 쿼리 탭에). 프로토콜·도구 단위 테스트, 표준 입출력으로 Oracle·PostgreSQL·MySQL 도구 확인. 실제 Claude Code에 등록해 쓰는 것은 확인하지 않았다.
+  Open Claude Code(Ctrl+Alt+C, AI 도우미의 Claude Code 버튼): 지금 연결·스키마를 알려 준 채로 사용자의 Claude Code를 새 터미널에서 연다(작업 폴더는 스크립트 폴더). 써 보고 부족하면 DBaro 안의 범용 터미널 탭(ConPTY + VT 에뮬레이터)을 검토한다.
 - [x] 실제 실행 계획 (실행해서 얻은 계획과 통계), 단축키 Alt+X: Oracle `V$SQL_PLAN_STATISTICS_ALL`·`DISPLAY_CURSOR ADVANCED ALLSTATS LAST`, PostgreSQL `EXPLAIN ANALYZE`, MySQL `EXPLAIN ANALYZE`, MariaDB `ANALYZE`. DML은 실행 후 되돌림, 예상과 크게 다른 행 수는 칠함, Oracle은 ADVANCED ALLSTATS LAST 글을 먼저 보임. Tibero는 아직
 
 - [x] 실제 DB(Oracle Free, PostgreSQL, MySQL, MariaDB 컨테이너)로 확인하는 환경
-  `dev/docker-compose.yml`을 띄우면 샘플 스키마(`dev/seed`: FK·두 컬럼 FK·자기 참조, 10만 행, 파티션, 여러 자료형, 뷰·루틴·트리거, 다른 스키마)가 들어가고, `dev/.env`가 있으면 엔진 테스트가 네 DB로도 돈다(`RealDbTest`). 확인하며 고친 것: Oracle 실제 계획 OMem·1Mem·Used-Mem이 1024배로 나오던 것(바이트였음), MySQL·MariaDB 계획의 테이블이 별칭으로 나와 객체 정보가 안 열리던 것, BIGINT UNSIGNED 최댓값·BIT(n)·YEAR 값, PostgreSQL 분할 테이블 DDL(PARTITION BY·파티션)과 프로시저 종류, Oracle DDL에 제약 인덱스가 따로 나와 다시 실행하면 오류 나던 것, PostgreSQL 자동완성에 인덱스가 테이블처럼 나오던 것. 앱 화면(자동완성 FK JOIN, 실행 중 표시·취소, Alt+X, 결과 편집)도 네 DB에서 확인했다.
+  `dev/docker-compose.yml`을 띄우면 샘플 스키마(`dev/seed`: FK·두 컬럼 FK·자기 참조, 10만 행, 파티션, 여러 자료형, 뷰·루틴·트리거, 다른 스키마)가 들어가고, `dev/.env`가 있으면 엔진 테스트가 네 DB로도 돈다(`RealDbTest`). 확인하며 고친 것: Oracle 실제 계획 OMem·1Mem·Used-Mem이 1024배로 나오던 것(바이트였음), MySQL·MariaDB 계획의 테이블이 별칭으로 나와 객체 정보가 안 열리던 것, BIGINT UNSIGNED 최댓값·BIT(n)·YEAR 값, PostgreSQL 분할 테이블 DDL(PARTITION BY·파티션)과 프로시저 종류, Oracle DDL에 제약 인덱스가 따로 나와 다시 실행하면 오류 나던 것, PostgreSQL 자동완성에 인덱스가 테이블처럼 나오던 것, PostgreSQL 분할 테이블의 인덱스가 탐색기 객체 목록에 테이블로 나오던 것(JDBC가 relkind 'I'에 종류를 주지 않음). 앱 화면(자동완성 FK JOIN, 실행 중 표시·취소, Alt+X, 결과 편집)도 네 DB에서 확인했다.
 
 ## 그 밖의 후보
 
-- 세션·락 모니터, 세션 종료 (V$SESSION, pg_stat_activity, processlist)
-- 테이블스페이스·DB 크기 사용량
 - 스키마 비교 (개발 ↔ 운영 DDL 차이)
 - MSI 다시 빌드해서 설치 확인 (작업 표시줄 고정 아이콘·점프 목록)
 - 코드 서명 인증서 마련 (스크립트는 `DBARO_SIGN_ARGS`로 서명할 준비가 돼 있다. 스마트 앱 제어가 켜진 PC는 서명이 없으면 실행을 막는다)

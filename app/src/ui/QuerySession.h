@@ -56,6 +56,8 @@ public:
     void run(const QList<SqlStatement> &statements, int pageSize = 500, int queryTimeoutSec = 0);
     void fetchMore(int count = 500);
     void cancel();
+    // 바쁨 상태와 상관없이 엔진에 cancel을 보낸다 (call로 부른 긴 작업: 스키마 DDL 등)
+    void interrupt();
     void commit();
     void rollback();
     void setAutoCommit(bool autoCommit);
@@ -63,6 +65,10 @@ public:
     // 실행 계획. 결과는 planReceived, 실패는 statementFailed.
     // 보통은 예상 계획(문장은 실행하지 않음), actual이면 문장을 실행해서 얻은 실제 계획 (바꾼 데이터는 엔진이 되돌린다).
     void explain(const SqlStatement &statement, bool actual = false);
+    // 엔진 메서드를 이 세션으로 부른다 (sessionId는 넣어 준다). 모니터 탭의 monitorSessions 등.
+    // 접속하지 않았으면 바로 오류로 done을 부른다. 바쁨 상태는 바꾸지 않는다.
+    void call(const QString &method, QCborMap params,
+              std::function<void(const QCborMap &result, const EngineError &error)> done);
     // 문장 여러 개를 한 번에 엔진으로 보내 차례로 실행한다 (데이터 불러오기, 결과 편집 반영).
     // 결과: executed, failed, skipped, affected, stoppedAt, cancelled, errors[{index, message}], elapsedMs
     void executeBatch(const QStringList &statements, bool stopOnError,
