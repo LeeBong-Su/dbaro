@@ -613,7 +613,7 @@ void MainWindow::createDocks()
     m_openClaudeAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_C));
     m_openClaudeAction->setToolTip(withShortcut(tr("Open Claude Code in a terminal for this connection, with your Claude login"),
                                                 m_openClaudeAction->shortcut()));
-    connect(m_openClaudeAction, &QAction::triggered, this, &MainWindow::openClaudeCode);
+    connect(m_openClaudeAction, &QAction::triggered, this, [this] { openClaudeCode(); });
     connect(m_aiPanel, &AiPanel::claudeCodeRequested, this, &MainWindow::openClaudeCode);
     m_claudeCodeAction = new QAction(tr("Use with Claude Code..."), this);
     m_claudeCodeAction->setToolTip(tr("Let Claude Code or Claude Desktop use this database with your Claude login (MCP)"));
@@ -737,7 +737,7 @@ void MainWindow::createToolBar()
     toolBar->addAction(m_rollbackAction);
 }
 
-void MainWindow::openClaudeCode()
+void MainWindow::openClaudeCode(const QString &prompt)
 {
     const ConnectionProfile *p = profile();
     if (!p)
@@ -751,8 +751,12 @@ void MainWindow::openClaudeCode()
             context.serverInfo = tab->session()->serverInfo();
     }
     QString note;
-    if (ClaudeCodeLauncher::launch(this, context, &note))
-        statusBar()->showMessage(note.isEmpty() ? tr("Claude Code opened for %1.").arg(p->name) : note, 8000);
+    if (!ClaudeCodeLauncher::launch(this, context, &note, prompt))
+        return;
+    if (note.isEmpty())
+        note = prompt.isEmpty() ? tr("Claude Code opened for %1.").arg(p->name)
+                                : tr("Sent to Claude Code (new terminal window) for %1.").arg(p->name);
+    statusBar()->showMessage(note, 8000);
 }
 
 void MainWindow::openSqlTab(const QString &sql, const QString &title)

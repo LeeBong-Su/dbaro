@@ -104,7 +104,7 @@ private:
     // 이름 바꾸기 리팩토링 (column이 비면 테이블). 파일·열린 탭은 바로 고치고, DB는 스크립트를 새 쿼리 탭에 연다.
     void openRename(const QString &metadataId, const QString &schema, const QString &table, const QString &column);
     // 이 연결·스키마로 사용자의 Claude Code를 새 터미널에서 연다 (ClaudeCodeLauncher)
-    void openClaudeCode();
+    void openClaudeCode(const QString &prompt = {}); // prompt: 첫 질문 (AI 도우미의 Ask: Claude Code)
     void closeQueryTab(int index);
     void selectAdjacentTab(int step); // 다음(+1)·이전(-1) 탭. 끝에서는 반대쪽 끝으로
     void openObject(const QString &metadataId, const QString &schema, const QString &name);

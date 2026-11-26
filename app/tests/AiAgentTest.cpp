@@ -703,6 +703,14 @@ private slots:
         QCOMPARE(arguments.first(), QStringLiteral("--append-system-prompt"));
         arguments = ClaudeCodeLauncher::arguments(context, folder, QStringLiteral("C:/x/claude-mcp.json"));
         QCOMPARE(arguments.mid(2), (QStringList{"--mcp-config", "C:/x/claude-mcp.json"}));
+
+        // 첫 질문은 맨 끝 인자 (claude "질문"). -로 시작하면 옵션으로 읽히지 않게 앞에 글을 붙인다
+        const QString question = QStringLiteral("Explain this SQL.\n\n```sql\nSELECT \"Name\" FROM t WHERE a = 'x'\n```");
+        arguments = ClaudeCodeLauncher::arguments(context, folder, {}, QStringLiteral("  ") + question + QStringLiteral("\n"));
+        QCOMPARE(arguments.size(), 3);
+        QCOMPARE(arguments.last(), question);
+        arguments = ClaudeCodeLauncher::arguments(context, folder, {}, QStringLiteral("-- why does this fail?"));
+        QCOMPARE(arguments.last(), QStringLiteral("Question: -- why does this fail?"));
     }
 
 private:

@@ -6,6 +6,8 @@
 
 #include <QApplication>
 #include <QCheckBox>
+#include <QComboBox>
+#include <QSettings>
 #include <QClipboard>
 #include <QHBoxLayout>
 #include <QKeyEvent>
@@ -103,7 +105,7 @@ AiPanel::AiPanel(const AiDbTools::Context &context, const Hooks &hooks, QWidget 
     claudeCode->setToolTip(tr("Open Claude Code in a terminal for this connection, with your Claude login (Ctrl+Alt+C)"));
     connect(newChat, &QToolButton::clicked, this, &AiPanel::newChat);
     connect(settings, &QToolButton::clicked, this, &AiPanel::settingsRequested);
-    connect(claudeCode, &QToolButton::clicked, this, &AiPanel::claudeCodeRequested);
+    connect(claudeCode, &QToolButton::clicked, this, [this] { emit claudeCodeRequested(QString()); });
     auto *top = new QHBoxLayout;
     top->addWidget(m_model, 1);
     top->addWidget(newChat);
@@ -138,6 +140,21 @@ AiPanel::AiPanel(const AiDbTools::Context &context, const Hooks &hooks, QWidget 
     m_quick.at(1)->setToolTip(tr("Look at the plan of the SQL in the editor and suggest how to make it faster"));
     m_quick.at(2)->setToolTip(tr("Find out why the last statement of the tab failed and suggest a fix"));
     quickRow->addStretch();
+    // 빠른 작업과 입력란의 질문을 어디로 보낼지. API 키가 없으면 Claude Code(사용자의 구독)가 기본
+    m_target = new QComboBox(this);
+    m_target->addItem(tr("AI Assistant"), QStringLiteral("assistant"));
+    m_target->addItem(tr("Claude Code"), QStringLiteral("claudeCode"));
+    m_target->setToolTip(tr("AI Assistant: answer here with your Anthropic API key.\n"
+                            "Claude Code: open Claude Code in a new terminal with the question, using your Claude login."));
+    const QString savedTarget = QSettings().value(QStringLiteral("ai/askTarget")).toString();
+    const QString defaultTarget = AiSettings::apiKey().isEmpty() ? QStringLiteral("claudeCode") : QStringLiteral("assistant");
+    m_target->setCurrentIndex(qMax(0, m_target->findData(savedTarget.isEmpty() ? defaultTarget : savedTarget)));
+    connect(m_target, &QComboBox::currentIndexChanged, this, [this] {
+        QSettings().setValue(QStringLiteral("ai/askTarget"), m_target->currentData().toString());
+        updateTarget();
+    });
+    quickRow->addWidget(new QLabel(tr("Ask"), this));
+    quickRow->addWidget(m_target);
 
     m_input = new QPlainTextEdit(this);
     m_input->setObjectName(QStringLiteral("aiInput"));
@@ -255,7 +272,7 @@ AiPanel::AiPanel(const AiDbTools::Context &context, const Hooks &hooks, QWidget 
         if (!model.isEmpty())
             m_model->setText(AiSettings::modelName(model));
     });
-    refreshBanner();
+    updateTarget(); // 입력란 안내와 배너
 }
 
 void AiPanel::refreshBanner()
@@ -263,14 +280,19 @@ void AiPanel::refreshBanner()
     const AiSettings settings = AiSettings::load();
     m_model->setText(AiSettings::modelName(settings.model));
     QStringList notes;
-    if (AiSettings::apiKey().isEmpty())
-        notes << tr("Enter an Anthropic API key in <b>Settings...</b> to start. Have a Claude subscription instead? "
-                     "Use DBaro from Claude Code: <b>Database → Use with Claude Code...</b>");
     const ConnectionProfile profile = m_context.profile ? m_context.profile() : ConnectionProfile();
-    if (profile.environment == Environment::Production)
-        notes << tr("<b>Production database</b>: every query the assistant runs needs your approval.");
-    if (!settings.sendRows)
-        notes << tr("Query results are not sent to the AI (Settings).");
+    if (askClaudeCode()) {
+        notes << tr("<b>Ask: Claude Code</b> - questions open Claude Code in a new terminal with this connection, using your "
+                     "Claude login (no API key).");
+    } else {
+        if (AiSettings::apiKey().isEmpty())
+            notes << tr("Enter an Anthropic API key in <b>Settings...</b> to start, or set <b>Ask</b> to <b>Claude Code</b> to use "
+                         "your Claude subscription.");
+        if (profile.environment == Environment::Production)
+            notes << tr("<b>Production database</b>: every query the assistant runs needs your approval.");
+        if (!settings.sendRows)
+            notes << tr("Query results are not sent to the AI (Settings).");
+    }
     m_banner->setText(notes.join(QStringLiteral("<br>")));
     m_banner->setVisible(!notes.isEmpty());
 }
@@ -370,8 +392,29 @@ void AiPanel::quickAction(const QString &kind)
                            "concrete changes (rewrite or index) and why.\n\n```sql\n%1\n```").arg(sql));
 }
 
+bool AiPanel::askClaudeCode() const
+{
+    return m_target && m_target->currentData().toString() == u"claudeCode";
+}
+
+void AiPanel::updateTarget()
+{
+    m_input->setPlaceholderText(askClaudeCode() ? tr("Ask Claude Code: opens a new terminal with your question (Ctrl+Enter)")
+                                                : tr("Ask the AI assistant (Ctrl+Enter to send)"));
+    refreshBanner();
+}
+
 void AiPanel::ask(const QString &question)
 {
+    if (askClaudeCode()) {
+        // 사용자의 Claude Code를 새 터미널에서 이 질문으로 연다 (대화는 그 창에서 이어진다)
+        emit claudeCodeRequested(question);
+        Entry entry{Entry::Notice, tr("Sent to Claude Code in a new terminal window: %1")
+                                       .arg(question.section(u'\n', 0, 0).left(120))};
+        m_entries.append(entry);
+        render();
+        return;
+    }
     if (m_agent->isRunning() || !ensureReady())
         return;
     const AiSettings settings = AiSettings::load();

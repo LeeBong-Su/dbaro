@@ -6,6 +6,8 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QClipboard>
+#include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -21,6 +23,10 @@
 #endif
 
 namespace ClaudeCodeLauncher {
+
+namespace {
+[[maybe_unused]] constexpr int kMaxPromptChars = 20000; // 맥락 글과 합쳐 Windows 명령줄(32767자) 안에 들게
+}
 
 QString claudePath()
 {
@@ -93,11 +99,15 @@ QString contextPrompt(const Context &context, const QString &folder)
     return lines.join(u'\n');
 }
 
-QStringList arguments(const Context &context, const QString &folder, const QString &mcpConfigPath)
+QStringList arguments(const Context &context, const QString &folder, const QString &mcpConfigPath, const QString &prompt)
 {
     QStringList arguments{QStringLiteral("--append-system-prompt"), contextPrompt(context, folder)};
     if (!mcpConfigPath.isEmpty())
         arguments << QStringLiteral("--mcp-config") << mcpConfigPath;
+    // 첫 질문 (claude "질문": 대화형으로 열고 바로 보낸다). -로 시작하면 옵션으로 읽히므로 앞에 글을 붙인다
+    const QString question = prompt.trimmed();
+    if (!question.isEmpty())
+        arguments << (question.startsWith(u'-') ? QStringLiteral("Question: ") + question : question);
     return arguments;
 }
 
@@ -235,7 +245,7 @@ bool startInNewTerminal(const QString &program, const QStringList &arguments, co
 
 } // namespace
 
-bool launch(QWidget *parent, const Context &context, QString *note)
+bool launch(QWidget *parent, const Context &context, QString *note, const QString &prompt)
 {
     const QString claude = claudePath();
     if (claude.isEmpty()) {
@@ -259,7 +269,17 @@ bool launch(QWidget *parent, const Context &context, QString *note)
     }
     const QString folder = workingFolder(context);
     QString program = claude;
-    QStringList args = arguments(context, folder, mcpConfig);
+    QString question = prompt.trimmed();
+#ifdef Q_OS_WIN
+    // Windows 명령줄은 32K자까지라 긴 질문(큰 스크립트)은 클립보드로 넘긴다
+    if (question.size() > kMaxPromptChars) {
+        QGuiApplication::clipboard()->setText(question);
+        question.clear();
+        if (note)
+            *note = QObject::tr("The question was too long to pass, so it was copied: paste it into Claude Code (Ctrl+V).");
+    }
+#endif
+    QStringList args = arguments(context, folder, mcpConfig, question);
 #ifdef Q_OS_WIN
     // npm으로 설치했으면 claude.cmd: cmd가 실행해야 한다. cmd는 여러 줄·따옴표 인자를 망가뜨리므로 맥락 글은 넘기지 않는다
     if (claude.endsWith(QLatin1String(".cmd"), Qt::CaseInsensitive) || claude.endsWith(QLatin1String(".bat"), Qt::CaseInsensitive)) {
@@ -267,9 +287,14 @@ bool launch(QWidget *parent, const Context &context, QString *note)
         args.prepend(claude);
         args.prepend(QStringLiteral("/c"));
         program = QStringLiteral("cmd.exe");
+        if (!question.isEmpty())
+            QGuiApplication::clipboard()->setText(question);
         if (note)
-            *note = QObject::tr("Claude Code was installed with npm, so DBaro could not pass the current connection; "
-                                "tell Claude which connection to use.");
+            *note = question.isEmpty()
+                        ? QObject::tr("Claude Code was installed with npm, so DBaro could not pass the current connection; "
+                                      "tell Claude which connection to use.")
+                        : QObject::tr("Claude Code was installed with npm, so the question was copied: paste it into Claude Code "
+                                      "(Ctrl+V) and say which connection to use.");
     }
 #endif
     if (!startInNewTerminal(program, args, folder, &error)) {

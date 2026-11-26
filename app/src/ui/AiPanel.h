@@ -9,6 +9,7 @@
 
 class AiAgent;
 class QCheckBox;
+class QComboBox;
 class QLabel;
 class QPlainTextEdit;
 class QPushButton;
@@ -44,7 +45,8 @@ public:
 
 signals:
     void settingsRequested();
-    void claudeCodeRequested(); // 이 연결로 Claude Code를 터미널에서 열기
+    // 이 연결로 Claude Code를 새 터미널에서 연다. prompt가 있으면 그 질문을 첫 메시지로 (Ask: Claude Code)
+    void claudeCodeRequested(const QString &prompt);
 
 private:
     struct Entry
@@ -66,6 +68,8 @@ private:
     void render();
     void onLink(const QUrl &url);
     void setRunning(bool running);
+    bool askClaudeCode() const; // 질문을 Claude Code로 보내는지
+    void updateTarget();
     QString render(const Entry &entry, QStringList *snippets) const;
 
     AiDbTools::Context m_context;
@@ -84,6 +88,7 @@ private:
     QTextBrowser *m_transcript = nullptr;
     QPlainTextEdit *m_input = nullptr;
     QCheckBox *m_includeSql = nullptr;
+    QComboBox *m_target = nullptr; // Ask: AI Assistant(API 키) / Claude Code(구독, 새 터미널)
     QPushButton *m_send = nullptr;
     QLabel *m_status = nullptr;
     QTimer *m_renderTimer = nullptr;

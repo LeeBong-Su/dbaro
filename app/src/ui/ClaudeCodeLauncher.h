@@ -27,10 +27,10 @@ QString claudePath();         // claude 실행 파일 (없으면 빈 값)
 bool isDbaroRegistered();     // Claude Code 사용자 설정(~/.claude.json)에 dbaro MCP 서버가 있는지
 QString workingFolder(const Context &context);
 QString contextPrompt(const Context &context, const QString &folder);
-// claude에 넘길 인자. mcpConfigPath가 있으면 --mcp-config로 붙인다
-QStringList arguments(const Context &context, const QString &folder, const QString &mcpConfigPath);
+// claude에 넘길 인자. mcpConfigPath가 있으면 --mcp-config로, prompt가 있으면 첫 질문으로 붙인다
+QStringList arguments(const Context &context, const QString &folder, const QString &mcpConfigPath, const QString &prompt = {});
 
-// 연다. 안 되면 parent에 알리고 false
-bool launch(QWidget *parent, const Context &context, QString *note = nullptr);
+// 연다. prompt가 있으면 그 질문을 바로 보낸 채로 (너무 길면 클립보드에 넣고 note로 알린다). 안 되면 parent에 알리고 false
+bool launch(QWidget *parent, const Context &context, QString *note = nullptr, const QString &prompt = {});
 
 } // namespace ClaudeCodeLauncher

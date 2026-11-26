@@ -63,7 +63,7 @@
 - [x] AI 에이전트형 DB 도구 (AI 모델 연결)
   Database → AI Assistant(Ctrl+Alt+I), 오른쪽 도크. Claude(Opus 5.5 기본, Sonnet·Haiku 5.5)와 대화하며 AI가 도구로 이 DB를 직접 살핀다: 스키마·테이블 목록, 테이블 구조(컬럼·키·참조·인덱스·코멘트), DDL, 읽기 전용 조회(문장 하나, 따로 연 읽기 전용 세션, 기본 100행, WITH 안의 DELETE·SELECT INTO·FOR UPDATE도 막음), 예상 실행 계획. 데이터·구조를 바꾸는 SQL은 실행하지 않고 제안만 해서 사용자가 쿼리 탭에서 연다. 빠른 작업: 에디터 SQL 설명(Explain SQL)·성능 검토(Tune SQL)·마지막 오류 고치기(Fix Error). 처음 쓸 때 무엇이 전송되는지 안내하고 동의를 받는다. 운영 DB는 조회마다 승인, 결과 값을 보내지 않는 설정(컬럼 이름·행 수만). API 키는 자격 증명 관리자, 회사 게이트웨이 주소 지정 가능. 가짜 API 서버로 스트리밍·도구 루프 단위 테스트(`dbaro_ai_tests`), Oracle·PostgreSQL·MySQL에서 도구 확인. 실제 API 호출은 키가 있어야 확인할 수 있다.
   Claude 구독으로 쓰기: Database → Use with Claude Code... 로 `dbaro-cli mcp`(MCP 서버)를 사용자의 Claude Code·Claude Desktop에 등록하면 API 키 없이 같은 도구를 쓴다(연결 고르기, 운영 연결은 조회 막음, 바꾸는 SQL은 `open_in_dbaro`로 DBaro 새 쿼리 탭에). 프로토콜·도구 단위 테스트, 표준 입출력으로 Oracle·PostgreSQL·MySQL 도구 확인. 실제 Claude Code에 등록해 쓰는 것은 확인하지 않았다.
-  Open Claude Code(Ctrl+Alt+C, AI 도우미의 Claude Code 버튼): 지금 연결·스키마를 알려 준 채로 사용자의 Claude Code를 새 터미널에서 연다(작업 폴더는 스크립트 폴더). 써 보고 부족하면 DBaro 안의 범용 터미널 탭(ConPTY + VT 에뮬레이터)을 검토한다.
+  Open Claude Code(Ctrl+Alt+C, AI 도우미의 Claude Code 버튼): 지금 연결·스키마를 알려 준 채로 사용자의 Claude Code를 새 터미널에서 연다(작업 폴더는 스크립트 폴더). AI 도우미의 Ask를 Claude Code로 두면 Explain·Tune·Fix Error와 입력란의 질문이 그 터미널의 첫 질문으로 열린다(API 키 없이). 써 보고 부족하면 DBaro 안의 범용 터미널 탭(ConPTY + VT 에뮬레이터)을 검토한다.
 - [x] 실제 실행 계획 (실행해서 얻은 계획과 통계), 단축키 Alt+X: Oracle `V$SQL_PLAN_STATISTICS_ALL`·`DISPLAY_CURSOR ADVANCED ALLSTATS LAST`, PostgreSQL `EXPLAIN ANALYZE`, MySQL `EXPLAIN ANALYZE`, MariaDB `ANALYZE`. DML은 실행 후 되돌림, 예상과 크게 다른 행 수는 칠함, Oracle은 ADVANCED ALLSTATS LAST 글을 먼저 보임. Tibero는 아직
 
 - [x] 실제 DB(Oracle Free, PostgreSQL, MySQL, MariaDB 컨테이너)로 확인하는 환경

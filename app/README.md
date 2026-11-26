@@ -85,7 +85,7 @@ claude mcp add --transport stdio --scope user dbaro -- "<DBaro 폴더>\dbaro-cli
 
 도구: `list_connections`, `list_schemas`, `list_tables`, `describe_table`, `get_ddl`, `run_query`(문장 하나, 읽기 전용 세션, 행 수 제한), `explain_query`(예상 계획), `open_in_dbaro`(SQL을 실행하지 않고 DBaro의 새 쿼리 탭에 연다: `dbaro.exe --connection <id> --open-sql <임시 파일> --title <제목>`). GUI의 AI 도우미와 같은 코드라 읽기 전용 검사가 같다. 비밀번호를 저장한 연결만 쓸 수 있다(물을 수 없다. `DBARO_PASSWORD`가 있으면 그것). 운영 연결은 `run_query`를 막는다(구조·계획은 된다). 옵션: `-c <연결>`(여러 번, 그 연결만), `--allow-production`, `--max-rows <n>`(기본 100, 최대 1000), `--no-rows`(값 없이 컬럼 이름·행 수만), `--connections-file <path>`.
 
-**Open Claude Code (Ctrl+Alt+C):** Database 메뉴나 AI 도우미 창의 Claude Code 버튼. 사용자의 `claude`를 새 터미널(Windows 11은 기본 터미널, 보통 Windows Terminal)에서 연다. 지금 연결·스키마·DB 버전을 `--append-system-prompt`로 알려 연결 이름을 말하지 않아도 그 연결의 dbaro 도구를 쓴다. dbaro MCP 서버가 등록돼 있지 않으면 그 세션에만 `--mcp-config`로 붙인다. 작업 폴더는 그 DBMS의 스크립트 폴더(없으면 `%USERPROFILE%\DBaro`, OneDrive와 동기화되는 문서 폴더는 쓰지 않는다). DBaro는 띄우기만 하고 입출력을 읽지 않는다. Claude Code 세션에서 DBaro를 띄웠어도 그 세션의 환경 변수(`CLAUDE_CODE_*` 등, 사용자가 직접 정한 것은 빼고)는 넘기지 않는다.
+**Open Claude Code (Ctrl+Alt+C):** Database 메뉴나 AI 도우미 창의 Claude Code 버튼. 사용자의 `claude`를 새 터미널(Windows 11은 기본 터미널, 보통 Windows Terminal)에서 연다. 지금 연결·스키마·DB 버전을 `--append-system-prompt`로 알려 연결 이름을 말하지 않아도 그 연결의 dbaro 도구를 쓴다. dbaro MCP 서버가 등록돼 있지 않으면 그 세션에만 `--mcp-config`로 붙인다. 작업 폴더는 그 DBMS의 스크립트 폴더(없으면 `%USERPROFILE%\DBaro`, OneDrive와 동기화되는 문서 폴더는 쓰지 않는다). DBaro는 띄우기만 하고 입출력을 읽지 않는다. AI 도우미 창의 **Ask**를 **Claude Code**로 두면(API 키가 없으면 기본) Explain SQL·Tune SQL·Fix Error와 입력란의 질문이 새 Claude Code 터미널의 첫 질문으로 열린다(`claude "질문"`, 사용자의 구독으로). Windows 명령줄에 넣기에 너무 긴 질문(2만 자 넘음)은 클립보드에 넣고 알린다. Claude Code 세션에서 DBaro를 띄웠어도 그 세션의 환경 변수(`CLAUDE_CODE_*` 등, 사용자가 직접 정한 것은 빼고)는 넘기지 않는다.
 
 ## 빌드
 
